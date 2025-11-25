@@ -1,28 +1,50 @@
 # Environment / secrets
 .env
 .env.*
+.npmrc
+.yarnrc
 *.key
 *.pem
+*.crt
+*.p12
+*.pfx
 
 # Logs / debug artifacts
 *.log
+*.log.*
 *.tmp
 *.bak
+*.orig
 wp-content/debug.log
 **/yoda-logs/
+npm-debug.log*
 
 # WordPress runtime data (never commit uploads/cache)
 wp-content/uploads/
 wp-content/cache/
+wp-content/upgrade/
+wp-content/backups/
+wp-content/advanced-cache.php
+wp-content/object-cache.php
+wp-content/wp-cache-config.php
 
 # Vendor / build output
 node_modules/
 vendor/
 *.zip
+dist/
+build/
+coverage/
+.phpunit.result.cache
+*.sql
+*.sql.gz
+*.sqlite
+*.db
 
 # IDE / OS noise
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+*.code-workspace
 *.swp
