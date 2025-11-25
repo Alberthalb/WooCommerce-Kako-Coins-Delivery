@@ -1,0 +1,28 @@
+# Environment / secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Logs / debug artifacts
+*.log
+*.tmp
+*.bak
+wp-content/debug.log
+**/yoda-logs/
+
+# WordPress runtime data (never commit uploads/cache)
+wp-content/uploads/
+wp-content/cache/
+
+# Vendor / build output
+node_modules/
+vendor/
+*.zip
+
+# IDE / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
