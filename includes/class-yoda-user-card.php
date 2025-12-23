@@ -4,11 +4,35 @@ if (!defined('ABSPATH')) exit;
 class Yoda_User_Card {
 
   const COOKIE_KAKO_ID = 'yoda_kako_id';
+  const VERIFY_TTL = 10 * MINUTE_IN_SECONDS;
+  const RL_WINDOW = MINUTE_IN_SECONDS;
+  const RL_MAX    = 60;
 
   public function hooks(){
     add_shortcode('yoda_kako_card', [$this,'shortcode']);
     add_shortcode('yoda_kako_logout', [$this,'logout_shortcode']);
     add_action('wp_enqueue_scripts', [$this,'assets']);
+
+    add_action('wp_ajax_yoda_kako_card_verify',        [$this,'ajax_verify']);
+    add_action('wp_ajax_nopriv_yoda_kako_card_verify', [$this,'ajax_verify']);
+
+    // Endpoint REST (mais resiliente em sites com cache/CDN que quebram admin-ajax/nonce)
+    add_action('rest_api_init', [$this, 'register_rest_routes']);
+  }
+
+  public function register_rest_routes(){
+    register_rest_route('yoda/v1', '/ping', [
+      'methods'  => ['GET'],
+      'callback' => function(){ return new WP_REST_Response(['ok'=>true,'ping'=>'yoda-kako'], 200); },
+      'permission_callback' => '__return_true',
+    ]);
+
+    register_rest_route('yoda/v1', '/kako/userinfo', [
+      // GET ajuda no teste via navegador; POST é usado pelo JS
+      'methods'  => ['GET','POST','OPTIONS'],
+      'callback' => [$this,'rest_userinfo'],
+      'permission_callback' => '__return_true',
+    ]);
   }
 
   public function assets(){
@@ -99,6 +123,9 @@ class Yoda_User_Card {
     wp_register_style('yoda-kako-card-inline', false);
     wp_enqueue_style('yoda-kako-card-inline');
     wp_add_inline_style('yoda-kako-card-inline', $css);
+
+    // JS externo (mais robusto que inline em ambientes com cache/minify/builder)
+    wp_enqueue_script('yoda-kako-card', plugins_url('../assets/yoda-kako-card.js', __FILE__), [], '1.0', true);
   }
 
   private function get_effective_creds(){
@@ -154,188 +181,143 @@ class Yoda_User_Card {
     }
   }
 
-  public function shortcode($atts){
-    $atts = shortcode_atts([
-      'kakoid' => '',
-      'show_badge' => 'yes',
-    ], $atts);
-
-    $remember = isset($_GET['yoda_remember']) && (string)$_GET['yoda_remember'] === '1';
-    $kakoId = trim((string)$atts['kakoid']);
-    $source = '';
-
-    if ($kakoId !== '') {
-      $source = 'attr';
-    } elseif (isset($_GET['kakoid']) && $_GET['kakoid'] !== '') {
-      $kakoId = sanitize_text_field($_GET['kakoid']);
-      $source = 'get';
-    } elseif (isset($_COOKIE[self::COOKIE_KAKO_ID]) && $_COOKIE[self::COOKIE_KAKO_ID] !== '') {
-      $kakoId = sanitize_text_field($_COOKIE[self::COOKIE_KAKO_ID]);
-      $source = 'cookie';
+  private function rate_limit_check($bucket){
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $key = 'yoda_rl_'.sanitize_key($bucket).'_'.md5((string)$ip);
+    $hits = (int) get_transient($key);
+    $hits++;
+    set_transient($key, $hits, self::RL_WINDOW);
+    if ($hits > self::RL_MAX){
+      return new WP_Error('rate_limited', 'Muitas tentativas. Aguarde um minuto e tente novamente.', ['status'=>429]);
     }
+    return true;
+  }
 
+  private function userinfo_payload($kakoId){
+    $kakoId = trim((string)$kakoId);
     if (!$kakoId){
-      return $this->render_form_card([
-        'mode' => 'neutral',
-        'title' => 'Conta Kako',
-        'text' => 'Digite seu ID para exibir o cartão.',
-        'kakoId' => '',
-        'remember' => false,
-        'btn' => 'Verificar',
-      ]);
+      return new WP_Error('missing', 'ID não informado.', ['status'=>400]);
+    }
+    if (!$this->is_valid_kako_id($kakoId)){
+      return new WP_Error('invalid', 'ID inválido. Use apenas letras, números, ponto, hífen ou underline (3 a 32 caracteres).', ['status'=>400]);
     }
 
-    if (!$this->is_valid_kako_id($kakoId)){
-      if ($source === 'cookie') $this->clear_kako_cookie_server();
-      return $this->render_form_card([
-        'mode' => 'alert',
-        'title' => 'ID inválido',
-        'text' => 'Use apenas letras, números, ponto, hífen ou underline (3 a 32 caracteres).',
-        'kakoId' => $kakoId,
-        'remember' => $remember,
-        'btn' => 'Tente novamente',
-      ]);
+    $ckey = 'yoda_kako_card_'.get_current_blog_id().'_'.md5(strtolower($kakoId));
+    $cached = get_transient($ckey);
+    if (is_array($cached) && !empty($cached['openId'])){
+      return $cached;
     }
 
     list($appId,$appKey,$base) = $this->get_effective_creds();
     $client = new Yoda_Kako_Client($base, $appId, $appKey);
     $res    = $client->userinfo($kakoId);
-
     if (is_wp_error($res)){
-      if ($source === 'cookie') $this->clear_kako_cookie_server();
-      return $this->render_form_card([
-        'mode' => 'alert',
-        'title' => 'Não foi possível verificar o ID',
-        'text' => esc_html($res->get_error_message()),
-        'kakoId' => $kakoId,
-        'remember' => $remember,
-        'btn' => 'Tente novamente',
-      ]);
+      return new WP_Error('http', $res->get_error_message(), ['status'=>502]);
     }
-
     if (($res['json']['code'] ?? -1) !== 0){
-      if ($source === 'cookie') $this->clear_kako_cookie_server();
       $msg = $res['json']['msg'] ?? 'Conta não encontrada.';
-      return $this->render_form_card([
-        'mode' => 'alert',
-        'title' => 'ID não encontrado',
-        'text' => esc_html($msg).' — verifique se o número está correto.',
-        'kakoId' => $kakoId,
-        'remember' => $remember,
-        'btn' => 'Tente novamente',
-      ]);
+      return new WP_Error('not_found', $msg, ['status'=>404]);
     }
 
-    $data     = $res['json']['data'] ?? [];
-    $nickname = $data['nickname'] ?? '';
-    $avatar   = $data['avatar']   ?? '';
-    $verified = true;
-
-    if (!$nickname) $nickname = 'Usuário';
-    if (!$avatar)   $avatar   = 'data:image/svg+xml;utf8,' . rawurlencode($this->placeholder_svg());
-
-    $show_badge = strtolower($atts['show_badge']) !== 'no';
-
-    if ($source === 'get' && class_exists('Yoda_Packs')){
-      $ttl = $remember ? 60*60*24*180 : DAY_IN_SECONDS;
-      Yoda_Packs::set_kako_cookie($kakoId, $ttl);
+    $data = $res['json']['data'] ?? [];
+    $payload = [
+      'kakoId'   => $kakoId,
+      'avatar'   => (string)($data['avatar']   ?? ''),
+      'nickname' => (string)($data['nickname'] ?? ''),
+      'openId'   => (string)($data['openId']   ?? ''),
+    ];
+    if (!$payload['nickname']) $payload['nickname'] = 'Usuário';
+    if (!$payload['avatar'])   $payload['avatar']   = 'data:image/svg+xml;utf8,' . rawurlencode($this->placeholder_svg());
+    if (!$payload['openId']){
+      return new WP_Error('not_found', 'Conta não encontrada.', ['status'=>404]);
     }
 
-    $remembered = ($source === 'get') ? $remember : ($source === 'cookie');
-    $maxAge = $remember ? 60*60*24*180 : 60*60*24;
-
-    ob_start(); ?>
-      <div class="yoda-kako-card" id="verificar-id">
-        <img class="yoda-kako-avatar" src="<?php echo esc_url($avatar); ?>" alt="Avatar do usuário" loading="lazy" />
-        <div class="yoda-kako-main">
-          <h3 class="yoda-kako-name">Bem vindo (<?php echo esc_html($nickname); ?>)</h3>
-          <p class="yoda-kako-id">ID: <?php echo esc_html($kakoId); ?></p>
-          <div class="yoda-kako-badges">
-            <?php if ($show_badge && $verified): ?>
-              <span class="yoda-badge ok">Verificado</span>
-            <?php endif; ?>
-            <?php if ($remembered): ?>
-              <span class="yoda-badge muted">ID salvo</span>
-            <?php endif; ?>
-          </div>
-        </div>
-      </div>
-      <script>
-      (function(){
-        try{
-          var id  = <?php echo wp_json_encode($kakoId); ?>;
-          var src = <?php echo wp_json_encode($source); ?>; // attr | get | cookie
-          var remember = <?php echo $remember ? 'true' : 'false'; ?>;
-          var maxAge = <?php echo (int)$maxAge; ?>;
-          if (src === 'get'){
-            var parts = [
-              'yoda_kako_id=' + encodeURIComponent(id),
-              'path=/',
-              'max-age=' + maxAge,
-              'samesite=lax'
-            ];
-            if (location.protocol === 'https:') parts.push('secure');
-            document.cookie = parts.join('; ');
-          }
-          window.dispatchEvent(new CustomEvent('yoda:id:verified', { detail: { kakoId: id, remember: remember }}));
-        }catch(e){ /* noop */ }
-      })();
-      </script>
-    <?php
-    return ob_get_clean();
+    set_transient($ckey, $payload, self::VERIFY_TTL);
+    return $payload;
   }
 
-  private function render_form_card(array $data){
-    $mode     = $data['mode'] ?? 'neutral'; // neutral | alert
-    $title    = (string)($data['title'] ?? 'Conta Kako');
-    $text     = (string)($data['text'] ?? '');
-    $kakoId   = (string)($data['kakoId'] ?? '');
-    $remember = !empty($data['remember']);
-    $btn      = (string)($data['btn'] ?? 'Verificar');
+  public function rest_userinfo(WP_REST_Request $req){
+    $rl = $this->rate_limit_check('kako_userinfo');
+    if (is_wp_error($rl)) return $rl;
 
-    $baseUrl = remove_query_arg(['kakoid','yoda_remember']);
-    $action  = esc_url($baseUrl);
-    $checked = $remember ? 'checked' : '';
-    $cardCls = $mode === 'alert' ? 'yoda-kako-card alert' : 'yoda-kako-card';
-    $avatar  = $mode === 'alert'
-      ? 'data:image/svg+xml;utf8,'.rawurlencode($this->placeholder_svg('#ffdddd','#ffcccc','#9b1b1b'))
-      : 'data:image/svg+xml;utf8,'.rawurlencode($this->placeholder_svg());
+    $kakoId = $req->get_param('kakoid');
+    if (!$kakoId){
+      $body = json_decode($req->get_body(), true);
+      if (is_array($body)) $kakoId = $body['kakoid'] ?? $body['kakoId'] ?? null;
+    }
+    $payload = $this->userinfo_payload($kakoId);
+    if (is_wp_error($payload)) return $payload;
+
+    $resp = new WP_REST_Response(['ok'=>true,'data'=>$payload], 200);
+    // Evita qualquer cache (LiteSpeed/CDN/proxy) em respostas dinâmicas.
+    $resp->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    $resp->header('Pragma', 'no-cache');
+    return $resp;
+  }
+
+  public function shortcode($atts){
+    $atts = shortcode_atts([
+      'show_badge' => 'yes',
+    ], $atts);
+
+    // Importante: para evitar vazamento via cache de página (home), este shortcode não renderiza
+    // conteúdo personalizado no HTML do servidor. Tudo é resolvido via JS + cookie (no browser).
+    $id = 'yoda-kako-card-'.uniqid();
+    $rest = rest_url('yoda/v1/kako/userinfo');
+    $showBadge = strtolower(trim((string)$atts['show_badge'])) !== 'no';
+
+    $placeholder = 'data:image/svg+xml;utf8,' . rawurlencode($this->placeholder_svg());
+    $placeholderAlert = 'data:image/svg+xml;utf8,' . rawurlencode($this->placeholder_svg('#ffdddd','#ffcccc','#9b1b1b'));
 
     ob_start(); ?>
-      <div class="<?php echo esc_attr($cardCls); ?>" id="verificar-id">
-        <img class="yoda-kako-avatar" src="<?php echo esc_attr($avatar); ?>" alt="" />
+      <div
+        class="yoda-kako-card"
+        id="<?php echo esc_attr($id); ?>"
+        data-yoda-kako-card="1"
+        data-rest="<?php echo esc_url($rest); ?>"
+        data-show-badge="<?php echo $showBadge ? '1' : '0'; ?>"
+        data-placeholder="<?php echo esc_attr($placeholder); ?>"
+        data-placeholder-alert="<?php echo esc_attr($placeholderAlert); ?>"
+      >
+        <img class="yoda-kako-avatar" src="<?php echo esc_attr($placeholder); ?>" alt="" />
         <div class="yoda-kako-main">
-          <?php if ($mode === 'alert'): ?>
-            <h3 class="yoda-kako-alert-title"><?php echo esc_html($title); ?></h3>
-            <p class="yoda-kako-alert-text"><?php echo wp_kses_post($text); ?></p>
-          <?php else: ?>
-            <h3 class="yoda-kako-name"><?php echo esc_html($title); ?></h3>
-            <p class="yoda-kako-id"><?php echo esc_html($text); ?></p>
-          <?php endif; ?>
+          <h3 class="yoda-kako-name">Conta Kako</h3>
+          <p class="yoda-kako-id">Digite seu ID para exibir o cartão.</p>
 
-          <form class="yoda-kako-actions" method="get" action="<?php echo $action; ?>">
-            <input type="text" name="kakoid" class="yoda-input" placeholder="Ex.: 10402704" autocomplete="off" value="<?php echo esc_attr($kakoId); ?>" />
-            <button type="submit" class="yoda-btn"><?php echo esc_html($btn); ?></button>
-            <?php
-              foreach ($_GET as $k => $v){
-                if ($k === 'kakoid' || $k === 'yoda_remember') continue;
-                if (is_array($v)) continue;
-                echo '<input type="hidden" name="'.esc_attr($k).'" value="'.esc_attr((string)$v).'" />';
-              }
-            ?>
+          <form class="yoda-kako-actions" method="get" action="">
+            <input type="text" name="kakoid" class="yoda-input" placeholder="Ex.: 10402704" autocomplete="off" />
+            <button type="submit" class="yoda-btn">Verificar</button>
             <label class="yoda-kako-remember">
-              <input type="checkbox" name="yoda_remember" value="1" <?php echo $checked; ?> />
+              <input type="checkbox" name="yoda_remember" value="1" />
               Lembrar meu ID para a próxima visita
             </label>
           </form>
 
           <div class="yoda-kako-badges">
-            <span class="yoda-badge muted"><?php echo $mode === 'alert' ? 'Tente novamente' : 'Aguardando verificação'; ?></span>
+            <span class="yoda-badge muted">Aguardando verificação</span>
           </div>
         </div>
       </div>
     <?php
     return ob_get_clean();
+  }
+
+  public function ajax_verify(){
+    // Admin-ajax fallback (nonce pode expirar em páginas cacheadas).
+    $nonce = isset($_POST['nonce']) ? (string)$_POST['nonce'] : '';
+    if ($nonce && !wp_verify_nonce($nonce, 'yoda_kako_card')){
+      $rl = $this->rate_limit_check('kako_userinfo_ajax');
+      if (is_wp_error($rl)){
+        wp_send_json_error(['msg' => $rl->get_error_message()], $rl->get_error_data()['status'] ?? 429);
+      }
+    }
+
+    $payload = $this->userinfo_payload($_POST['kakoid'] ?? '');
+    if (is_wp_error($payload)){
+      $status = (int)($payload->get_error_data()['status'] ?? 400);
+      wp_send_json_error(['msg' => $payload->get_error_message()], $status);
+    }
+    wp_send_json_success($payload);
   }
 
   public function logout_shortcode($atts){

@@ -94,5 +94,22 @@
   });
 
   $(function(){ ensureUnlockedFromCookie(); });
-})(jQuery);
 
+  // Se o usuário verificar via [yoda_kako_card], destrava os packs em tempo real.
+  try{
+    window.addEventListener('yoda:id:verified', function(){ ensureUnlockedFromCookie(); });
+    window.addEventListener('yoda:id:cleared', function(){
+      try{
+        var $grid = $('#yoda-packs-grid');
+        if(!$grid.length) return;
+        $grid.attr('data-verified','0');
+        $grid.find('.yoda-card').addClass('locked').each(function(){
+          var $c = $(this);
+          if (!$c.find('.yoda-lock').length) $c.prepend('<span class="yoda-lock">&#128274;</span>');
+          $c.find('.yoda-price').css('opacity', 0);
+          $c.find('.yoda-cta').attr('disabled','disabled').attr('href','javascript:void(0)').text('Verificar ID');
+        });
+      }catch(e){}
+    });
+  }catch(e){}
+})(jQuery);
