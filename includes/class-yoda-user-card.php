@@ -39,21 +39,22 @@ class Yoda_User_Card {
     $css = "
     .yoda-kako-card{
       position:relative;
-      display:flex;
-      gap:16px;
+      display:grid;
+      grid-template-columns:72px 1fr;
+      gap:18px;
       align-items:center;
-      padding:18px;
+      padding:20px 22px;
       border-radius:18px;
-      background:linear-gradient(105deg, rgba(245,237,255,.9) 0%, rgba(255,255,255,.95) 100%);
-      border:1px solid rgba(122,49,255,.10);
-      box-shadow:0 18px 45px rgba(122,49,255,.10), 0 3px 10px rgba(0,0,0,.03);
+      background:#efedf6;
+      border:1px solid rgba(0,0,0,.06);
+      box-shadow:0 18px 45px rgba(0,0,0,.10);
       overflow:hidden;
     }
     .yoda-kako-card:before{
       content:'';
       position:absolute; inset:-1px;
-      background: radial-gradient(1200px 300px at -100px -200px, rgba(122,49,255,.15), transparent 40%),
-                  radial-gradient(900px 240px at 120% 120%, rgba(244,166,255,.18), transparent 45%);
+      background: radial-gradient(1200px 300px at -100px -200px, rgba(161,76,255,.18), transparent 40%),
+                  radial-gradient(900px 240px at 120% 120%, rgba(93,166,56,.16), transparent 45%);
       pointer-events:none;
       border-radius:18px;
     }
@@ -62,15 +63,15 @@ class Yoda_User_Card {
       border-radius:50%;
       object-fit:cover; object-position:center;
       border:3px solid #fff;
-      box-shadow:0 6px 18px rgba(122,49,255,.18);
+      box-shadow:0 10px 26px rgba(0,0,0,.12);
       background:#f4f4f8;
     }
     .yoda-kako-main{min-width:0;}
     .yoda-kako-name{
-      font-weight:800; font-size:20px; line-height:1.2; color:#1a1a1a; margin:0 0 2px;
+      font-weight:900; font-size:22px; line-height:1.15; color:#111; margin:0 0 6px;
     }
     .yoda-kako-id{
-      font-size:13px; color:#616161; margin:0;
+      font-size:13px; color:#444; margin:0;
     }
     .yoda-kako-badges{
       display:flex; gap:8px; align-items:center; margin-top:8px;
@@ -109,15 +110,18 @@ class Yoda_User_Card {
     @keyframes yoda-spin{ 0%{ transform:rotate(0) scale(1) } 100%{ transform:rotate(360deg) scale(1.1) } }
     @keyframes yoda-confetti{ to { transform:translate(calc(-50% + var(--dx,0px)), calc(-50% + var(--dy,-60px))) rotate(540deg); opacity:0 } }
     .yoda-kako-actions{ display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
-    .yoda-kako-actions .yoda-input{ flex:1 1 220px; min-width:180px; padding:10px 12px; border-radius:10px; border:1px solid #e5e5ee; background:#fff; box-shadow:inset 0 1px 2px rgba(0,0,0,.04); font-size:14px; }
-    .yoda-kako-actions .yoda-btn{ padding:10px 14px; border-radius:10px; border:1px solid rgba(122,49,255,.25); background:#7a31ff; color:#fff; font-weight:700; cursor:pointer; box-shadow:0 6px 16px rgba(122,49,255,.18); }
+    .yoda-kako-actions .yoda-input{ flex:1 1 360px; min-width:220px; padding:14px 14px; border-radius:12px; border:1px solid rgba(0,0,0,.08); background:#fff; box-shadow:inset 0 1px 2px rgba(0,0,0,.05); font-size:14px; }
+    .yoda-kako-actions .yoda-btn{ padding:14px 22px; border-radius:12px; border:0; background:#7a31ff; color:#fff; font-weight:900; cursor:pointer; box-shadow:0 10px 22px rgba(122,49,255,.22); }
     .yoda-kako-actions .yoda-btn:hover{ filter:brightness(.96) }
     .yoda-kako-remember{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; color:#616161; user-select:none; }
     .yoda-kako-remember input{ width:16px; height:16px; }
     @media (max-width:560px){
-      .yoda-kako-card{padding:14px}
-      .yoda-kako-avatar{width:56px;height:56px;flex-basis:56px}
+      .yoda-kako-card{grid-template-columns:60px 1fr; padding:16px}
+      .yoda-kako-avatar{width:54px;height:54px;flex-basis:54px}
       .yoda-kako-name{font-size:18px}
+      .yoda-kako-actions{gap:8px}
+      .yoda-kako-actions .yoda-input{min-width:0; flex:1 1 auto}
+      .yoda-kako-actions .yoda-btn{width:100%}
     }
     ";
     wp_register_style('yoda-kako-card-inline', false);
@@ -262,7 +266,7 @@ class Yoda_User_Card {
 
     // Importante: para evitar vazamento via cache de página (home), este shortcode não renderiza
     // conteúdo personalizado no HTML do servidor. Tudo é resolvido via JS + cookie (no browser).
-    $id = 'yoda-kako-card-'.uniqid();
+    $instance = 'yoda-kako-card-'.uniqid();
     $rest = rest_url('yoda/v1/kako/userinfo');
     $showBadge = strtolower(trim((string)$atts['show_badge'])) !== 'no';
 
@@ -272,8 +276,9 @@ class Yoda_User_Card {
     ob_start(); ?>
       <div
         class="yoda-kako-card"
-        id="<?php echo esc_attr($id); ?>"
+        id="verificar-id"
         data-yoda-kako-card="1"
+        data-yoda-kako-instance="<?php echo esc_attr($instance); ?>"
         data-rest="<?php echo esc_url($rest); ?>"
         data-show-badge="<?php echo $showBadge ? '1' : '0'; ?>"
         data-placeholder="<?php echo esc_attr($placeholder); ?>"

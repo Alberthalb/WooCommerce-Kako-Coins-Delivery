@@ -24,7 +24,14 @@
       $c.find('.yoda-lock').remove();
       $c.find('.yoda-price').css('opacity', 1);
       var pid = $c.data('pid');
-      $c.find('.yoda-cta').removeAttr('disabled').attr('href', '?add-to-cart='+pid).text('Comprar');
+      var priceTxt = $.trim($c.find('.yoda-price').text() || '');
+      $c.find('.yoda-cta')
+        .removeAttr('disabled')
+        .attr('href', '#yoda-quick-pix')
+        .attr('data-yoda-buy', '1')
+        .attr('data-product-id', pid)
+        .attr('data-price', priceTxt)
+        .text('Recarregar');
     });
     try{ window.dispatchEvent(new CustomEvent('yoda:id:verified')); }catch(e){}
   }
@@ -106,7 +113,7 @@
         $grid.find('.yoda-card').addClass('locked').each(function(){
           var $c = $(this);
           if (!$c.find('.yoda-lock').length) $c.prepend('<span class="yoda-lock">&#128274;</span>');
-          $c.find('.yoda-price').css('opacity', 0);
+          $c.find('.yoda-price').css('opacity', .25);
           $c.find('.yoda-cta').attr('disabled','disabled').attr('href','javascript:void(0)').text('Verificar ID');
         });
       }catch(e){}

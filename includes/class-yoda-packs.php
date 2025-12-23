@@ -112,17 +112,28 @@ class Yoda_Packs {
     if (!is_singular() && !is_front_page()) return;
 
     $css = "
-    .yoda-box{background:#fff; border-radius:14px; padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.06); margin:12px 0;}
-    .yoda-row{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px;}
-    @media(max-width:900px){.yoda-row{grid-template-columns:repeat(2,minmax(0,1fr));}}
-    .yoda-card{border:1px solid #eee; border-radius:14px; padding:22px; text-align:center; position:relative; background:#fafafa;}
+    .yoda-box{background:#fff; border-radius:14px; padding:22px; box-shadow:0 10px 30px rgba(0,0,0,.06); margin:12px 0;}
+    .yoda-title{margin:0 0 6px; font-size:28px; font-weight:900; color:#111;}
+    .yoda-subtitle{margin:0 0 18px; font-size:14px; color:#666;}
+
+    .yoda-row{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px;}
+    @media(max-width:980px){.yoda-row{grid-template-columns:repeat(2,minmax(0,1fr));}}
+    @media(max-width:560px){.yoda-row{grid-template-columns:1fr;}}
+
+    .yoda-card{border:1px solid #eee; border-radius:14px; padding:22px; text-align:left; position:relative; background:#fff;}
     .yoda-card.locked{opacity:.55;}
-    .yoda-card .yoda-amount{font-weight:700; font-size:20px; color:#111;}
-    .yoda-card .yoda-price{margin-top:8px; font-weight:600; color:#7a31ff;}
-    .yoda-card .yoda-cta{margin-top:10px; display:inline-block; padding:8px 14px; border-radius:10px; background:#7a31ff; color:#fff; text-decoration:none; font-weight:600;}
+    .yoda-card.locked .yoda-price{opacity:.25;}
+
+    .yoda-card .yoda-amount{font-weight:900; font-size:44px; line-height:1; color:#121212; letter-spacing:.2px;}
+    .yoda-card .yoda-unit{margin-top:6px; font-size:14px; color:#111;}
+    .yoda-card .yoda-sep{margin:14px 0 12px; height:2px; width:100%; background:rgba(93,166,56,.75); border-radius:999px;}
+    .yoda-card .yoda-price{font-weight:900; font-size:28px; color:#5da638; margin:0 0 14px;}
+
+    .yoda-card .yoda-cta{display:block; width:100%; text-align:center; padding:14px 16px; border-radius:10px; background:#a14cff; color:#fff; text-decoration:none; font-weight:900;}
     .yoda-card .yoda-cta[disabled]{pointer-events:none; opacity:.6;}
+
     .yoda-lock{position:absolute; top:10px; right:12px; font-size:14px; color:#bbb;}
-    .yoda-verify .yoda-button{background:linear-gradient(90deg,#f4a6ff,#7a31ff); border:none; color:#fff; font-weight:700; padding:12px 18px; border-radius:10px; cursor:pointer;}
+    .yoda-verify .yoda-button{background:linear-gradient(90deg,#f4a6ff,#7a31ff); border:none; color:#fff; font-weight:900; padding:12px 18px; border-radius:10px; cursor:pointer;}
     .yoda-verify input{width:100%; padding:12px 14px; border-radius:10px; border:1px solid #e5e5e5; background:#fff;}
     .yoda-help{font-size:13px; color:#777; margin-top:6px}
     ";
@@ -169,19 +180,11 @@ class Yoda_Packs {
 
     ob_start();
     ?>
-    <div class="yoda-box yoda-verify" id="yoda-verify-box">
-      <h2 style="margin:0 0 8px; font-size:26px;">Verificar Conta</h2>
-      <p class="yoda-help">Digite seu Kako ID para continuar com a compra</p>
-      <form id="yoda-verify-form" autocomplete="off" style="display:grid; grid-template-columns:1fr auto; gap:10px;">
-        <input type="text" name="kakoid" id="yoda-kakoid" value="<?php echo esc_attr($prefill_id); ?>" placeholder="Kako ID" />
-        <button class="yoda-button" type="submit">Confirmar Conta</button>
-      </form>
-      <div id="yoda-verify-msg" class="yoda-help"></div>
-    </div>
+    <?php echo do_shortcode('[yoda_kako_card]'); ?>
 
     <div class="yoda-box">
-      <h3 style="margin:0 0 8px;">Pacotes de Moedas Disponíveis</h3>
-      <p class="yoda-help">Verifique sua conta acima para comprar qualquer pacote</p>
+      <h3 class="yoda-title">Selecionar Quantidade de Moedas</h3>
+      <p class="yoda-subtitle">Escolha o pacote que melhor atende suas necessidades</p>
 
       <div class="yoda-row" id="yoda-packs-grid" data-verified="<?php echo $prefill_id ? '1':'0'; ?>">
         <?php foreach ($products as $p):
@@ -192,11 +195,13 @@ class Yoda_Packs {
           <div class="yoda-card <?php echo $is_verified ? '' : 'locked'; ?>" data-pid="<?php echo esc_attr($p->get_id()); ?>">
             <span class="yoda-lock"><?php echo $is_verified ? '' : '&#128274;'; ?></span>
             <div class="yoda-amount"><?php echo number_format_i18n($amount, 0); ?></div>
+            <div class="yoda-unit">Moedas</div>
+            <div class="yoda-sep"></div>
             <?php if ($is_verified): ?>
               <div class="yoda-price"><?php echo wp_kses_post($price); ?></div>
-              <a class="yoda-cta" href="<?php echo esc_url( add_query_arg(['add-to-cart'=>$p->get_id()]) ); ?>">Comprar</a>
+              <a class="yoda-cta" data-yoda-buy="1" data-product-id="<?php echo esc_attr($p->get_id()); ?>" data-product-name="<?php echo esc_attr($p->get_name()); ?>" data-coins="<?php echo esc_attr($amount); ?>" data-price="<?php echo esc_attr(wp_strip_all_tags($price)); ?>" href="#yoda-quick-pix">Recarregar</a>
             <?php else: ?>
-              <div class="yoda-price" style="opacity:.0;">&nbsp;</div>
+              <div class="yoda-price"><?php echo wp_kses_post($price); ?></div>
               <a class="yoda-cta" href="javascript:void(0)" disabled>Verificar ID</a>
             <?php endif; ?>
           </div>
@@ -322,4 +327,3 @@ class Yoda_Packs {
     set_transient($ckey, $payload, self::VERIFY_TTL);
   }
 }
-

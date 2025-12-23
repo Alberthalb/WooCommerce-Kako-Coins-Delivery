@@ -25,6 +25,7 @@ require_once __DIR__.'/includes/class-yoda-direct-checkout.php';
 // (opt-out) Checkout style removed by request
 require_once __DIR__.'/includes/class-yoda-checkout-extras.php';
 require_once __DIR__.'/includes/class-yoda-webhooks.php';
+require_once __DIR__.'/includes/class-yoda-quick-pix.php';
 
 // Hooks principais
 add_action('plugins_loaded', function () {
@@ -60,6 +61,7 @@ add_action('plugins_loaded', function () {
   // (opt-out) Checkout style removed by request
   (new Yoda_Checkout_Extras())->hooks();
   (new Yoda_Webhooks())->hooks();
+  (new Yoda_Quick_Pix())->hooks();
 });
 
 // Opcional: forçar IPv4 em hosts com IPv6 problemático
