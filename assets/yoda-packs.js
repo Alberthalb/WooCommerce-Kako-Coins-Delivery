@@ -1,22 +1,56 @@
 (function($){
-  // Helper: verifica cookie e destrava a UI caso já esteja verificado
-  function ensureUnlockedFromCookie(){
+  function getCookieKakoId(){
     try{
       var m = document.cookie.match(/(?:^|; )yoda_kako_id=([^;]+)/);
-      var hasId = !!(m && m[1]);
-      if(!hasId) return;
-      var $grid = $('#yoda-packs-grid');
-      if(!$grid.length) return;
-      if($grid.attr('data-verified') === '1') return;
-      $grid.attr('data-verified','1');
-      $grid.find('.yoda-card').removeClass('locked').each(function(){
-        var $c = $(this);
-        $c.find('.yoda-lock').remove();
-        $c.find('.yoda-price').css('opacity', 1);
-        var pid = $c.data('pid');
-        $c.find('.yoda-cta').removeAttr('disabled').attr('href', '?add-to-cart='+pid).text('Comprar');
+      return m ? decodeURIComponent(m[1] || '') : '';
+    }catch(e){ return ''; }
+  }
+
+  function ensureUnlockedFromCookie(){
+    var hasId = !!getCookieKakoId();
+    if(!hasId) return false;
+    var $grid = $('#yoda-packs-grid');
+    if(!$grid.length) return true;
+    if($grid.attr('data-verified') === '1') return true;
+    unlockGrid();
+    return true;
+  }
+
+  function unlockGrid(){
+    var $grid = $('#yoda-packs-grid');
+    $grid.attr('data-verified', '1');
+    $grid.find('.yoda-card').removeClass('locked').each(function(){
+      var $c = $(this);
+      $c.find('.yoda-lock').remove();
+      $c.find('.yoda-price').css('opacity', 1);
+      var pid = $c.data('pid');
+      $c.find('.yoda-cta').removeAttr('disabled').attr('href', '?add-to-cart='+pid).text('Comprar');
+    });
+    try{ window.dispatchEvent(new CustomEvent('yoda:id:verified')); }catch(e){}
+  }
+
+  function pollVerifyStatus(kakoId, onSuccess){
+    var tries = 0;
+    var inFlight = false;
+    var iv = setInterval(function(){
+      tries++;
+      ensureUnlockedFromCookie();
+      if (tries > 15){ clearInterval(iv); return; }
+      if (inFlight) return;
+      inFlight = true;
+      $.post(YodaPacks.ajax, {
+        action: 'yoda_verify_kako_status',
+        nonce: YodaPacks.nonce,
+        kakoid: kakoId
+      }).done(function(r){
+        if(r && r.success){
+          onSuccess(r);
+          clearInterval(iv);
+        }
+      }).always(function(){
+        inFlight = false;
       });
-    }catch(e){}
+    }, 1200);
   }
 
   $(document).on('submit', '#yoda-verify-form', function(e){
@@ -30,6 +64,7 @@
       $msg.text('Informe seu ID do Kako.');
       return;
     }
+
     $btn.prop('disabled', true).text(YodaPacks.texts.checking);
     $msg.text('');
 
@@ -40,29 +75,15 @@
     }).done(function(r){
       if(r && r.success){
         $msg.text(YodaPacks.texts.ok);
-        // destrava grid
-        var $grid = $('#yoda-packs-grid');
-        $grid.attr('data-verified', '1');
-        $grid.find('.yoda-card').removeClass('locked').each(function(){
-          var $c = $(this);
-          $c.find('.yoda-lock').remove();
-          // revela preço e ativa CTA
-          $c.find('.yoda-price').css('opacity', 1);
-          var pid = $c.data('pid');
-          $c.find('.yoda-cta').removeAttr('disabled').attr('href', '?add-to-cart='+pid).text('Comprar');
-        });
+        unlockGrid();
       }else{
         var m = (r && r.data && r.data.msg) ? r.data.msg : YodaPacks.texts.fail;
         $msg.text(m);
-        // Se o servidor sinalizou pendência (retentativa em segundo plano), faz polling do cookie
         if (r && r.data && r.data.pending){
-          var tries = 0;
-          var iv = setInterval(function(){
-            tries++;
-            ensureUnlockedFromCookie();
-            var hasId = /(?:^|; )yoda_kako_id=/.test(document.cookie);
-            if (hasId || tries>15){ clearInterval(iv); }
-          }, 1200);
+          pollVerifyStatus(kakoId, function(){
+            $msg.text(YodaPacks.texts.ok);
+            unlockGrid();
+          });
         }
       }
     }).fail(function(){
@@ -72,6 +93,6 @@
     });
   });
 
-  // Quando a página carrega (e.g., retornando do checkout), garanta o estado destravado
   $(function(){ ensureUnlockedFromCookie(); });
 })(jQuery);
+
