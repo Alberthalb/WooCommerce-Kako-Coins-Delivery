@@ -62,6 +62,12 @@ class Yoda_Quick_Pix {
     .yoda-qp-pay{display:flex; flex-direction:column; gap:10px; height:100%;}
     .yoda-qp-pay .yoda-qp-summary{margin-top:0;}
     .yoda-qp-pay .yoda-qp-iframe{width:100%; flex:1 1 auto; min-height:420px; border:0; border-radius:12px; overflow:hidden;}
+    .yoda-qp-qr{display:grid; place-items:center; padding:12px; border:1px solid rgba(161,76,255,.22); background:rgba(161,76,255,.06); border-radius:12px;}
+    .yoda-qp-qr img{max-width:min(320px, 80vw); width:100%; height:auto; border-radius:10px; background:#fff;}
+    .yoda-qp-code{display:flex; gap:10px; align-items:stretch;}
+    .yoda-qp-code input{flex:1; padding:12px 12px; border-radius:10px; border:1px solid #e6e6ee; font-size:12px; background:#fff;}
+    .yoda-qp-code button{padding:12px 14px; border-radius:10px; border:0; background:#111; color:#fff; font-weight:900; cursor:pointer;}
+    .yoda-qp-hint{font-size:13px; color:#555; margin:0;}
 
     @media (max-width:520px){
       .yoda-qp-overlay{padding:0; align-items:stretch; justify-content:stretch;}
@@ -74,8 +80,7 @@ class Yoda_Quick_Pix {
     wp_enqueue_style('yoda-quick-pix-inline');
     wp_add_inline_style('yoda-quick-pix-inline', $css);
 
-    // Se a página estiver sendo carregada dentro do iframe do modal, esconda header/footer do tema
-    // para evitar "duplo layout" e scroll desnecessário.
+    // Mantém compatibilidade caso algum gateway ainda use iframe; mas a UI preferencial é QR/copia-e-cola.
     if (!empty($_GET['yoda_modal'])) {
       add_filter('show_admin_bar', '__return_false', 999);
       add_action('wp_head', function(){
@@ -134,6 +139,30 @@ class Yoda_Quick_Pix {
       if (strpos($key, 'pix') !== false) return (string)$gid;
     }
     return '';
+  }
+
+  private function extract_pix_meta(WC_Order $order){
+    $out = [
+      'qr_base64' => '',
+      'qr_code'   => '',
+      'expires'   => '',
+    ];
+
+    // Mercado Pago (plugin oficial) costuma salvar esses metas:
+    $qr64 = (string) $order->get_meta('mp_pix_qr_base64');
+    $qrc  = (string) $order->get_meta('mp_pix_qr_code');
+    $exp  = (string) $order->get_meta('checkout_pix_date_expiration');
+    if (!$exp) $exp = (string) $order->get_meta('mp_pix_date_of_expiration');
+
+    // fallback (caso o plugin use underscore)
+    if (!$qr64) $qr64 = (string) $order->get_meta('_mp_pix_qr_base64');
+    if (!$qrc)  $qrc  = (string) $order->get_meta('_mp_pix_qr_code');
+    if (!$exp)  $exp  = (string) $order->get_meta('_checkout_pix_date_expiration');
+
+    $out['qr_base64'] = trim($qr64);
+    $out['qr_code']   = trim($qrc);
+    $out['expires']   = trim($exp);
+    return $out;
   }
 
   public function rest_create_pix(WP_REST_Request $req){
@@ -204,7 +233,15 @@ class Yoda_Quick_Pix {
     $last  = $parts ? implode(' ', $parts) : '.';
 
     $domain = parse_url(home_url('/'), PHP_URL_HOST) ?: 'site.local';
-    $email  = 'cliente+'.time().'@'.$domain;
+    $email  = '';
+    if (function_exists('is_user_logged_in') && is_user_logged_in()){
+      $u = wp_get_current_user();
+      if ($u && !empty($u->user_email)) $email = (string) $u->user_email;
+    }
+    if (!$email){
+      // Email neutro para pedidos guest (evita "cliente+timestamp@...").
+      $email = 'comprador@'.$domain;
+    }
 
     // Prepara um "carrinho temporário" para satisfazer gateways que consultam WC()->cart.
     $oldCart = [];
@@ -274,6 +311,8 @@ class Yoda_Quick_Pix {
     }
     WC()->cart->calculate_totals();
 
+    $pix = $this->extract_pix_meta($order);
+
     $resp = new WP_REST_Response([
       'ok' => true,
       'data' => [
@@ -282,6 +321,7 @@ class Yoda_Quick_Pix {
         'pay_url'    => $pay_url,
         'total'      => (string) $order->get_total(),
         'currency'   => (string) $order->get_currency(),
+        'pix'        => $pix,
         'product'    => [
           'id'    => $product_id,
           'name'  => $product->get_name(),

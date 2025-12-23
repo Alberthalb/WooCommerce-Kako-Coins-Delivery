@@ -122,6 +122,19 @@
   }
 
   function buildPixModal(cfg){
+    var userHtml = '';
+    if (cfg.avatar || cfg.nickname || cfg.name){
+      userHtml = `
+        <div class="yoda-qp-user" style="margin:0" data-userbox>
+          <img alt="" src="${escapeHtml(cfg.avatar || '')}" />
+          <div>
+            <p class="name">${escapeHtml(cfg.nickname ? ('Conta: ' + cfg.nickname) : 'Conta verificada')}</p>
+            ${cfg.name ? `<p class="meta">${escapeHtml('Nome: ' + cfg.name)}</p>` : ``}
+            <p class="meta">Kako ID: ${escapeHtml(cfg.kakoid || '')}</p>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="yoda-qp-modal" role="dialog" aria-modal="true">
         <div class="yoda-qp-head">
@@ -136,7 +149,20 @@
               <div class="line"><span>Moedas</span><strong>${escapeHtml(cfg.coins || '')}</strong></div>
               <div class="line"><span>Kako ID</span><strong>${escapeHtml(cfg.kakoid || '')}</strong></div>
             </div>
-            <iframe class="yoda-qp-iframe" title="Pagamento PIX" src="${escapeHtml(cfg.payUrl || '')}"></iframe>
+            ${userHtml}
+            ${cfg.qrBase64 ? `
+              <p class="yoda-qp-hint">Escaneie o QR Code ou copie e cole o código Pix.</p>
+              <div class="yoda-qp-qr"><img alt="QR Code Pix" src="data:image/png;base64,${escapeHtml(cfg.qrBase64)}" /></div>
+            ` : ``}
+            ${cfg.qrCode ? `
+              <div class="yoda-qp-code">
+                <input type="text" readonly value="${escapeHtml(cfg.qrCode)}" />
+                <button type="button" data-copy-pix>Copiar</button>
+              </div>
+            ` : ``}
+            ${(!cfg.qrBase64 && !cfg.qrCode) ? `
+              <iframe class="yoda-qp-iframe" title="Pagamento PIX" src="${escapeHtml(cfg.payUrl || '')}"></iframe>
+            ` : ``}
           </div>
         </div>
       </div>
@@ -159,6 +185,25 @@
     qa('.yoda-qp-close,[data-cancel]', overlay).forEach(function(b){
       b.addEventListener('click', function(){ closeModal(); });
     });
+
+    var copyBtn = q('[data-copy-pix]', overlay);
+    if (copyBtn){
+      copyBtn.addEventListener('click', function(){
+        try{
+          var input = copyBtn.parentElement ? q('input', copyBtn.parentElement) : null;
+          var val = input ? input.value : '';
+          if (!val) return;
+          if (navigator.clipboard && navigator.clipboard.writeText){
+            navigator.clipboard.writeText(val);
+          } else if (input){
+            input.select();
+            document.execCommand('copy');
+          }
+          copyBtn.textContent = 'Copiado';
+          setTimeout(function(){ copyBtn.textContent = 'Copiar'; }, 1200);
+        }catch(e){}
+      });
+    }
   }
 
   function persistFormIfChecked(root){
@@ -196,6 +241,7 @@
       try{ location.hash = '#verificar-id'; }catch(e){}
       return;
     }
+    var kakoUser = null;
     var cfg = {
       title: (window.YodaQuickPix && YodaQuickPix.texts && YodaQuickPix.texts.title) || 'Insira seus dados para pagamento',
       confirm: (window.YodaQuickPix && YodaQuickPix.texts && YodaQuickPix.texts.confirm) || 'Confirmar pagamento',
@@ -218,6 +264,7 @@
     if (restKako){
       loadKakoUser(restKako, kakoId).then(function(u){
         if (!u) return;
+        kakoUser = u;
         var box = q('[data-userbox]', modal);
         if (!box) return;
         q('img', box).src = u.avatar || '';
@@ -269,13 +316,19 @@
         persistFormIfChecked(modal);
 
         var payUrl = r.data.pay_url || '';
+        var pix = (r.data && r.data.pix) ? r.data.pix : {};
         overlay.innerHTML = buildPixModal({
           close: cfg.close,
           payUrl: payUrl,
           orderId: r.data.order_id,
           total: r.data.total ? ('R$ ' + String(r.data.total)) : '',
           coins: (r.data.product && r.data.product.coins) ? String(r.data.product.coins) : (coins||''),
-          kakoid: kakoId
+          kakoid: kakoId,
+          name: name,
+          avatar: (kakoUser && kakoUser.avatar) ? kakoUser.avatar : '',
+          nickname: (kakoUser && kakoUser.nickname) ? kakoUser.nickname : '',
+          qrBase64: pix.qr_base64 || '',
+          qrCode: pix.qr_code || ''
         });
         bindModalCommon(overlay);
       }).finally(function(){
