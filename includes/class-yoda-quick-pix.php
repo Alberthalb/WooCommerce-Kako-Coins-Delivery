@@ -17,6 +17,12 @@ class Yoda_Quick_Pix {
       'callback' => [$this, 'rest_create_pix'],
       'permission_callback' => '__return_true',
     ]);
+
+    register_rest_route('yoda/v1', '/quick/status', [
+      'methods'  => ['GET','OPTIONS'],
+      'callback' => [$this, 'rest_status'],
+      'permission_callback' => '__return_true',
+    ]);
   }
 
   public function enqueue_assets(){
@@ -28,6 +34,7 @@ class Yoda_Quick_Pix {
     wp_enqueue_script('yoda-quick-pix', plugins_url('../assets/yoda-quick-pix.js', __FILE__), [], '1.0', true);
     wp_localize_script('yoda-quick-pix', 'YodaQuickPix', [
       'restQuickPix' => rest_url('yoda/v1/quick/pix'),
+      'restQuickStatus' => rest_url('yoda/v1/quick/status'),
       'restKakoUser' => rest_url('yoda/v1/kako/userinfo'),
       'texts' => [
         'title' => 'Insira seus dados para pagamento',
@@ -68,6 +75,13 @@ class Yoda_Quick_Pix {
     .yoda-qp-code input{flex:1; padding:12px 12px; border-radius:10px; border:1px solid #e6e6ee; font-size:12px; background:#fff;}
     .yoda-qp-code button{padding:12px 14px; border-radius:10px; border:0; background:#111; color:#fff; font-weight:900; cursor:pointer;}
     .yoda-qp-hint{font-size:13px; color:#555; margin:0;}
+    .yoda-qp-live{font-size:13px; color:#444; margin:0; display:flex; gap:8px; align-items:center;}
+    .yoda-qp-dot{width:8px; height:8px; border-radius:999px; background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.18);}
+    .yoda-qp-dot.ok{background:#18a558; box-shadow:0 0 0 4px rgba(24,165,88,.18);}
+    .yoda-qp-success{padding:14px; border-radius:12px; border:1px solid rgba(24,165,88,.22); background:rgba(24,165,88,.06);}
+    .yoda-qp-success h3{margin:0 0 6px; font-size:18px; font-weight:900; color:#0b6b37;}
+    .yoda-qp-success p{margin:0; color:#14532d; font-size:13px;}
+    .yoda-qp-success .ref{margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size:12px; color:#14532d;}
 
     @media (max-width:520px){
       .yoda-qp-overlay{padding:0; align-items:stretch; justify-content:stretch;}
@@ -105,6 +119,55 @@ class Yoda_Quick_Pix {
       return new WP_Error('rate_limited', 'Muitas tentativas. Aguarde um minuto e tente novamente.', ['status'=>429]);
     }
     return true;
+  }
+
+  public function rest_status(WP_REST_Request $req){
+    $rl = $this->rate_limit_check();
+    if (is_wp_error($rl)) return $rl;
+
+    if (!function_exists('wc_get_order')) {
+      return new WP_Error('wc_missing', 'WooCommerce não disponível.', ['status'=>500]);
+    }
+
+    $order_id = (int) $req->get_param('order_id');
+    $key      = (string) $req->get_param('key');
+    if ($order_id <= 0 || $key === ''){
+      return new WP_Error('bad_request', 'Parâmetros inválidos.', ['status'=>400]);
+    }
+
+    $order = wc_get_order($order_id);
+    if (!$order){
+      return new WP_Error('not_found', 'Pedido não encontrado.', ['status'=>404]);
+    }
+
+    if (!hash_equals((string)$order->get_order_key(), $key)){
+      return new WP_Error('forbidden', 'Chave inválida.', ['status'=>403]);
+    }
+
+    $wc_status = $order->get_status();
+    $delivery_status = (string) get_post_meta($order_id, Yoda_Fulfillment::META_DELIV_STAT, true);
+    $order_ref = (string) get_post_meta($order_id, Yoda_Fulfillment::META_ORDER_REF, true);
+
+    $coins = null;
+    if (class_exists('Yoda_Product_Meta')) {
+      $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+    }
+
+    $resp = new WP_REST_Response([
+      'ok' => true,
+      'data' => [
+        'order_id'        => $order_id,
+        'order_number'    => $order->get_order_number(),
+        'wc_status'       => $wc_status,
+        'delivery_status' => $delivery_status,
+        'delivered'       => ($delivery_status === 'delivered'),
+        'order_ref'       => $order_ref,
+        'coins'           => $coins,
+      ],
+    ], 200);
+    $resp->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    $resp->header('Pragma', 'no-cache');
+    return $resp;
   }
 
   private function is_valid_cpf($cpf){

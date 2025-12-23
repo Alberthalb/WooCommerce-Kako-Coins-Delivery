@@ -27,7 +27,12 @@
 
   function closeModal(){
     var el = q('.yoda-qp-overlay');
-    if (el) el.remove();
+    if (el){
+      try{
+        if (el.__yodaInterval) clearInterval(el.__yodaInterval);
+      }catch(e){}
+      el.remove();
+    }
     document.documentElement.style.overflow = '';
   }
 
@@ -150,6 +155,7 @@
               <div class="line"><span>Kako ID</span><strong>${escapeHtml(cfg.kakoid || '')}</strong></div>
             </div>
             ${userHtml}
+            <p class="yoda-qp-live" data-live><span class="yoda-qp-dot"></span><span>Aguardando pagamento e entrega…</span></p>
             ${cfg.qrBase64 ? `
               <p class="yoda-qp-hint">Escaneie o QR Code ou copie e cole o código Pix.</p>
               <div class="yoda-qp-qr"><img alt="QR Code Pix" src="data:image/png;base64,${escapeHtml(cfg.qrBase64)}" /></div>
@@ -165,6 +171,16 @@
             ` : ``}
           </div>
         </div>
+      </div>
+    `;
+  }
+
+  function buildDeliveredBox(cfg){
+    return `
+      <div class="yoda-qp-success">
+        <h3>Moedas entregues com sucesso</h3>
+        <p>Pagamento confirmado e moedas depositadas na conta informada.</p>
+        ${cfg.orderRef ? `<div class="ref">Protocolo: ${escapeHtml(cfg.orderRef)}</div>` : ``}
       </div>
     `;
   }
@@ -204,6 +220,62 @@
         }catch(e){}
       });
     }
+  }
+
+  function startDeliveryPolling(overlay, cfg){
+    try{
+      var rest = (window.YodaQuickPix && YodaQuickPix.restQuickStatus) ? YodaQuickPix.restQuickStatus : '';
+      if (!rest || !cfg.orderId || !cfg.orderKey) return;
+
+      var tries = 0;
+      var maxTries = 180; // ~15min se intervalo 5s
+      var intervalMs = 5000;
+
+      function tick(){
+        tries++;
+        if (tries > maxTries){
+          try{
+            var live = q('[data-live]', overlay);
+            if (live) live.innerHTML = '<span class="yoda-qp-dot"></span><span>Pagamento ainda não confirmado. Você pode fechar e voltar depois.</span>';
+          }catch(e){}
+          clearInterval(overlay.__yodaInterval);
+          overlay.__yodaInterval = null;
+          return;
+        }
+
+        fetchJson(rest + '?order_id=' + encodeURIComponent(cfg.orderId) + '&key=' + encodeURIComponent(cfg.orderKey), {
+          method: 'GET',
+          credentials: 'same-origin'
+        }).then(function(r){
+          if (!(r && r.ok && r.data)) return;
+          var delivered = !!r.data.delivered;
+          var live = q('[data-live]', overlay);
+          if (delivered){
+            if (live){
+              live.innerHTML = '<span class="yoda-qp-dot ok"></span><span>Entrega confirmada.</span>';
+            }
+            var pay = q('.yoda-qp-pay', overlay);
+            if (pay && !q('.yoda-qp-success', pay)){
+              var box = document.createElement('div');
+              box.innerHTML = buildDeliveredBox({ orderRef: r.data.order_ref || '' });
+              pay.insertBefore(box.firstElementChild, pay.firstChild);
+              try{ window.dispatchEvent(new CustomEvent('yoda:delivery:delivered', { detail: r.data })); }catch(e){}
+            }
+            clearInterval(overlay.__yodaInterval);
+            overlay.__yodaInterval = null;
+          } else {
+            if (live){
+              var txt = 'Aguardando pagamento e entrega…';
+              if (r.data.wc_status && r.data.wc_status !== 'pending') txt = 'Pagamento recebido, aguardando entrega…';
+              live.innerHTML = '<span class="yoda-qp-dot"></span><span>' + escapeHtml(txt) + '</span>';
+            }
+          }
+        }).catch(function(){});
+      }
+
+      overlay.__yodaInterval = setInterval(tick, intervalMs);
+      tick();
+    }catch(e){}
   }
 
   function persistFormIfChecked(root){
@@ -321,6 +393,7 @@
           close: cfg.close,
           payUrl: payUrl,
           orderId: r.data.order_id,
+          orderKey: r.data.order_key,
           total: r.data.total ? ('R$ ' + String(r.data.total)) : '',
           coins: (r.data.product && r.data.product.coins) ? String(r.data.product.coins) : (coins||''),
           kakoid: kakoId,
@@ -331,6 +404,7 @@
           qrCode: pix.qr_code || ''
         });
         bindModalCommon(overlay);
+        startDeliveryPolling(overlay, { orderId: r.data.order_id, orderKey: r.data.order_key });
       }).finally(function(){
         btn.disabled = false;
         btn.textContent = cfg.confirm;
