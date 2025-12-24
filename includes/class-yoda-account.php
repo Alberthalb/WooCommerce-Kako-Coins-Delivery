@@ -96,7 +96,7 @@ class Yoda_Account {
     if ($require_email){
       $html .= '<p><label>Email</label><br><input type="email" name="email" class="input-text" required autocomplete="off"></p>';
     }
-    $html .= '<p><label>ID/username do Kako</label><br><input type="text" name="kakoid" class="input-text" required placeholder="Ex.: 10402704" autocomplete="off"></p>';
+    $html .= '<p><label>ID/username do Kako</label><br><input type="text" name="kakoid" class="input-text" required placeholder="Ex.: 99999999" autocomplete="off"></p>';
     $html .= '<p><button type="submit" class="button">Ver minhas compras</button></p>';
     $html .= '</form>';
 

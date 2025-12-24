@@ -162,8 +162,9 @@ class Yoda_Packs {
 
     $args = [
       'status'  => 'publish',
-      'limit'   => 12,
-      'orderby' => 'menu_order',
+      'limit'   => -1,
+      'meta_key'=> '_yoda_coins_amount',
+      'orderby' => 'meta_value_num',
       'order'   => 'ASC',
       'meta_query' => [
         [
@@ -178,6 +179,21 @@ class Yoda_Packs {
     }
     $products = wc_get_products($args);
 
+    // Fallback: garante ordem crescente pelo valor numérico, mesmo em versões antigas do Woo.
+    if (!empty($products)){
+      usort($products, function($a, $b){
+        $amountA = (int) $a->get_meta('_yoda_coins_amount', true);
+        $amountB = (int) $b->get_meta('_yoda_coins_amount', true);
+        if ($amountA === $amountB){
+          $orderA = (int) $a->get_menu_order();
+          $orderB = (int) $b->get_menu_order();
+          if ($orderA === $orderB) return $a->get_id() <=> $b->get_id();
+          return $orderA <=> $orderB;
+        }
+        return $amountA <=> $amountB;
+      });
+    }
+
     ob_start();
     ?>
     <?php echo do_shortcode('[yoda_kako_card]'); ?>
@@ -188,7 +204,7 @@ class Yoda_Packs {
 
       <div class="yoda-row" id="yoda-packs-grid" data-verified="<?php echo $prefill_id ? '1':'0'; ?>">
         <?php foreach ($products as $p):
-          $amount = (int) get_post_meta($p->get_id(), '_yoda_coins_amount', true);
+          $amount = (int) $p->get_meta('_yoda_coins_amount', true);
           $price  = wc_price($p->get_price());
           $is_verified = !empty($prefill_id);
         ?>

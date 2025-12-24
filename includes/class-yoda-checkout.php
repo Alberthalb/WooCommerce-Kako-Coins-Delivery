@@ -51,7 +51,7 @@ class Yoda_Checkout {
     $fields['billing']['billing_kako_id'] = [
       'type'        => 'text',
       'label'       => 'ID/username do Kako',
-      'placeholder' => 'Ex.: 10402704',
+      'placeholder' => 'Ex.: 99999999',
       'required'    => true,
       'priority'    => 4,
       'class'       => ['form-row-wide'],
@@ -91,7 +91,7 @@ class Yoda_Checkout {
     woocommerce_form_field('billing_kako_id', [
       'type'        => 'text',
       'label'       => 'ID/username do Kako',
-      'placeholder' => 'Ex.: 10402704',
+      'placeholder' => 'Ex.: 99999999',
       'required'    => true,
       'class'       => ['form-row-wide'],
     ], $current);
@@ -240,4 +240,3 @@ class Yoda_Checkout {
     wp_add_inline_script('yoda-checkout-masks', $js);
   }
 }
-

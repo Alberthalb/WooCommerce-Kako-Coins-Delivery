@@ -290,7 +290,7 @@ class Yoda_User_Card {
           <p class="yoda-kako-id">Digite seu ID para exibir o cartão.</p>
 
           <form class="yoda-kako-actions" method="get" action="">
-            <input type="text" name="kakoid" class="yoda-input" placeholder="Ex.: 10402704" autocomplete="off" />
+            <input type="text" name="kakoid" class="yoda-input" placeholder="Ex.: 99999999" autocomplete="off" />
             <button type="submit" class="yoda-btn">Verificar</button>
             <label class="yoda-kako-remember">
               <input type="checkbox" name="yoda_remember" value="1" />
