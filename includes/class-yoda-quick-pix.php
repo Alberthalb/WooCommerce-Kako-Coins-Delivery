@@ -44,44 +44,75 @@ class Yoda_Quick_Pix {
     ]);
 
     $css = "
-    .yoda-qp-overlay{position:fixed; inset:0; background:rgba(0,0,0,.58); z-index:999999; display:flex; align-items:center; justify-content:center; padding:18px;}
-    .yoda-qp-modal{width:min(640px, 96vw); height:min(92vh, 920px); background:#fff; border-radius:16px; box-shadow:0 30px 90px rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.16); display:flex; flex-direction:column; overflow:hidden;}
-    .yoda-qp-head{display:flex; align-items:center; justify-content:space-between; padding:16px 16px 10px; border-bottom:1px solid #eee; flex:0 0 auto; background:#fff;}
-    .yoda-qp-title{font-weight:900; font-size:14px; letter-spacing:.2px; margin:0;}
-    .yoda-qp-close{appearance:none; border:0; background:transparent; font-size:18px; cursor:pointer; padding:6px 10px; border-radius:10px;}
-    .yoda-qp-body{padding:16px; overflow:auto; -webkit-overflow-scrolling:touch; flex:1 1 auto;}
-    .yoda-qp-grid{display:grid; gap:10px;}
-    .yoda-qp-field label{display:block; font-size:12px; font-weight:800; color:#3a3a3a; margin-bottom:6px;}
-    .yoda-qp-field input{width:100%; padding:11px 12px; border:1px solid #e6e6ee; border-radius:10px; background:#fff; font-size:14px;}
-    .yoda-qp-row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+    .yoda-qp-overlay{position:fixed; inset:0; background:rgba(12,12,18,.58); z-index:999999; display:flex; align-items:center; justify-content:center; padding:18px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,\"Apple Color Emoji\",\"Segoe UI Emoji\";}
+    .yoda-qp-modal{width:min(920px, 96vw); height:min(92vh, 940px); background:#fff; border-radius:20px; box-shadow:0 32px 110px rgba(0,0,0,.45); border:1px solid rgba(17,17,17,.08); display:flex; flex-direction:column; overflow:hidden;}
+    .yoda-qp-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:18px 18px 14px; border-bottom:1px solid rgba(17,17,17,.08); flex:0 0 auto; background:
+      radial-gradient(1200px 420px at 18% 0%, rgba(122,49,255,.22), transparent 55%),
+      radial-gradient(900px 420px at 92% 10%, rgba(24,165,88,.16), transparent 60%),
+      #fff;
+    }
+    .yoda-qp-head .left{min-width:0;}
+    .yoda-qp-title{font-weight:950; font-size:16px; letter-spacing:.2px; margin:0; color:#0f1020;}
+    .yoda-qp-subtitle{margin:2px 0 0; font-size:13px; color:#5b5b66; line-height:1.35;}
+    .yoda-qp-close{appearance:none; border:0; background:rgba(15,16,32,.06); color:#0f1020; width:40px; height:40px; border-radius:14px; font-size:22px; line-height:40px; cursor:pointer; display:grid; place-items:center;}
+    .yoda-qp-close:hover{background:rgba(15,16,32,.10);}
+    .yoda-qp-body{padding:16px 18px 18px; overflow:auto; -webkit-overflow-scrolling:touch; flex:1 1 auto; background:linear-gradient(180deg, rgba(122,49,255,.05), transparent 30%), #fff;}
+
+    .yoda-qp-grid{display:grid; gap:12px;}
+    .yoda-qp-field label{display:block; font-size:12px; font-weight:900; color:#252538; margin-bottom:6px;}
+    .yoda-qp-field input{width:100%; padding:12px 12px; border:1px solid rgba(15,16,32,.10); border-radius:12px; background:#fff; font-size:14px; outline:none;}
+    .yoda-qp-field input:focus{border-color:rgba(122,49,255,.55); box-shadow:0 0 0 4px rgba(122,49,255,.12);}
+    .yoda-qp-row{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
     @media (max-width:520px){.yoda-qp-row{grid-template-columns:1fr;}}
-    .yoda-qp-summary{margin-top:10px; padding:12px; border-radius:12px; border:1px solid rgba(122,49,255,.16); background:rgba(122,49,255,.06);}
-    .yoda-qp-summary .line{display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:3px 0;}
-    .yoda-qp-user{display:flex; gap:10px; align-items:center; margin-top:10px; padding:12px; border-radius:12px; border:1px solid #eee; background:#fafafa;}
-    .yoda-qp-user img{width:44px; height:44px; border-radius:50%; object-fit:cover; background:#f1f1f4;}
-    .yoda-qp-user .name{font-weight:900; font-size:14px; margin:0;}
-    .yoda-qp-user .meta{font-size:12px; margin:0; color:#555;}
+
+    .yoda-qp-card{padding:14px; border-radius:16px; border:1px solid rgba(15,16,32,.10); background:#fff; box-shadow:0 10px 30px rgba(0,0,0,.04);}
+    .yoda-qp-summary{margin-top:10px; padding:14px; border-radius:16px; border:1px solid rgba(122,49,255,.14); background:rgba(122,49,255,.06);}
+    .yoda-qp-summary .line{display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:4px 0; color:#27273a;}
+    .yoda-qp-summary .line strong{font-weight:950; color:#0f1020;}
+
+    .yoda-qp-user{display:flex; gap:12px; align-items:center; margin-top:10px; padding:14px; border-radius:16px; border:1px solid rgba(15,16,32,.10); background:rgba(15,16,32,.03);}
+    .yoda-qp-user img{width:46px; height:46px; border-radius:50%; object-fit:cover; background:#f1f1f4; border:1px solid rgba(15,16,32,.08);}
+    .yoda-qp-user .name{font-weight:950; font-size:14px; margin:0; color:#0f1020;}
+    .yoda-qp-user .meta{font-size:12px; margin:2px 0 0; color:#5b5b66;}
+
+    .yoda-qp-steps{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
+    .yoda-qp-step{font-size:12px; font-weight:900; padding:8px 10px; border-radius:999px; border:1px solid rgba(15,16,32,.10); background:#fff; color:#3a3a4a;}
+    .yoda-qp-step.on{border-color:rgba(122,49,255,.30); background:rgba(122,49,255,.08); color:#331a66;}
+
     .yoda-qp-actions{display:flex; gap:10px; margin-top:14px;}
-    .yoda-qp-actions .btn{flex:1; padding:12px 14px; border-radius:12px; border:1px solid #e6e6ee; background:#fff; font-weight:900; cursor:pointer;}
-    .yoda-qp-actions .btn.primary{background:#18a558; color:#fff; border-color:#18a558;}
+    .yoda-qp-actions .btn{flex:1; padding:12px 14px; border-radius:14px; border:1px solid rgba(15,16,32,.10); background:#fff; font-weight:950; cursor:pointer; color:#0f1020;}
+    .yoda-qp-actions .btn.primary{background:linear-gradient(90deg,#18a558,#1fbe69); color:#fff; border-color:transparent;}
     .yoda-qp-actions .btn:disabled{opacity:.6; cursor:not-allowed;}
+
     .yoda-qp-msg{margin-top:10px; font-size:13px; color:#b00;}
-    .yoda-qp-pay{display:flex; flex-direction:column; gap:10px; height:100%;}
-    .yoda-qp-pay .yoda-qp-summary{margin-top:0;}
-    .yoda-qp-pay .yoda-qp-iframe{width:100%; flex:1 1 auto; min-height:420px; border:0; border-radius:12px; overflow:hidden;}
-    .yoda-qp-qr{display:grid; place-items:center; padding:12px; border:1px solid rgba(161,76,255,.22); background:rgba(161,76,255,.06); border-radius:12px;}
-    .yoda-qp-qr img{max-width:min(320px, 80vw); width:100%; height:auto; border-radius:10px; background:#fff;}
-    .yoda-qp-code{display:flex; gap:10px; align-items:stretch;}
-    .yoda-qp-code input{flex:1; padding:12px 12px; border-radius:10px; border:1px solid #e6e6ee; font-size:12px; background:#fff;}
-    .yoda-qp-code button{padding:12px 14px; border-radius:10px; border:0; background:#111; color:#fff; font-weight:900; cursor:pointer;}
-    .yoda-qp-hint{font-size:13px; color:#555; margin:0;}
-    .yoda-qp-live{font-size:13px; color:#444; margin:0; display:flex; gap:8px; align-items:center;}
-    .yoda-qp-dot{width:8px; height:8px; border-radius:999px; background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.18);}
+
+    .yoda-qp-paygrid{display:grid; grid-template-columns:360px 1fr; gap:12px; align-items:start;}
+    @media (max-width:860px){.yoda-qp-paygrid{grid-template-columns:1fr;}}
+
+    .yoda-qp-live{font-size:13px; color:#3a3a4a; margin:0; display:flex; gap:10px; align-items:center;}
+    .yoda-qp-dot{width:10px; height:10px; border-radius:999px; background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.18);}
     .yoda-qp-dot.ok{background:#18a558; box-shadow:0 0 0 4px rgba(24,165,88,.18);}
-    .yoda-qp-success{padding:14px; border-radius:12px; border:1px solid rgba(24,165,88,.22); background:rgba(24,165,88,.06);}
-    .yoda-qp-success h3{margin:0 0 6px; font-size:18px; font-weight:900; color:#0b6b37;}
+    .yoda-qp-dot.done{background:#7a31ff; box-shadow:0 0 0 4px rgba(122,49,255,.16);}
+
+    .yoda-qp-hint{font-size:13px; color:#5b5b66; margin:0; line-height:1.4;}
+    .yoda-qp-qr{display:grid; place-items:center; padding:14px; border:1px solid rgba(122,49,255,.18); background:rgba(122,49,255,.06); border-radius:16px;}
+    .yoda-qp-qr img{max-width:min(320px, 80vw); width:100%; height:auto; border-radius:14px; background:#fff; border:1px solid rgba(15,16,32,.10);}
+
+    .yoda-qp-code{display:flex; gap:10px; align-items:stretch; margin-top:10px;}
+    .yoda-qp-code input{flex:1; padding:12px 12px; border-radius:14px; border:1px solid rgba(15,16,32,.10); font-size:12px; background:#fff; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;}
+    .yoda-qp-code button{padding:12px 14px; border-radius:14px; border:0; background:#0f1020; color:#fff; font-weight:950; cursor:pointer; min-width:110px;}
+    .yoda-qp-code button.secondary{background:rgba(15,16,32,.08); color:#0f1020; border:1px solid rgba(15,16,32,.10);}
+
+    .yoda-qp-iframewrap{border-radius:16px; overflow:hidden; border:1px solid rgba(15,16,32,.10); background:#fff;}
+    .yoda-qp-iframe{width:100%; height:520px; border:0; display:block;}
+    @media (max-width:520px){.yoda-qp-iframe{height:58vh;}}
+
+    .yoda-qp-success{padding:14px; border-radius:16px; border:1px solid rgba(24,165,88,.22); background:rgba(24,165,88,.06);}
+    .yoda-qp-success h3{margin:0 0 6px; font-size:18px; font-weight:950; color:#0b6b37;}
     .yoda-qp-success p{margin:0; color:#14532d; font-size:13px;}
     .yoda-qp-success .ref{margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size:12px; color:#14532d;}
+
+    .yoda-qp-toast{position:fixed; left:50%; bottom:18px; transform:translateX(-50%); padding:10px 12px; border-radius:14px; background:rgba(15,16,32,.92); color:#fff; font-weight:900; font-size:13px; z-index:1000000; box-shadow:0 16px 40px rgba(0,0,0,.35);}
 
     @media (max-width:520px){
       .yoda-qp-overlay{padding:0; align-items:stretch; justify-content:stretch;}

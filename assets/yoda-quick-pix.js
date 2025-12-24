@@ -20,8 +20,16 @@
     overlay.addEventListener('click', function(ev){
       if (ev.target === overlay) closeModal();
     });
+    overlay.__yodaOnKeyDown = function(ev){
+      if (ev && (ev.key === 'Escape' || ev.key === 'Esc')) closeModal();
+    };
+    document.addEventListener('keydown', overlay.__yodaOnKeyDown);
     document.body.appendChild(overlay);
     document.documentElement.style.overflow = 'hidden';
+    try{
+      var focusEl = q('.yoda-qp-close', overlay) || q('input,button,a', overlay);
+      if (focusEl) focusEl.focus();
+    }catch(e){}
     return overlay;
   }
 
@@ -30,6 +38,9 @@
     if (el){
       try{
         if (el.__yodaInterval) clearInterval(el.__yodaInterval);
+      }catch(e){}
+      try{
+        if (el.__yodaOnKeyDown) document.removeEventListener('keydown', el.__yodaOnKeyDown);
       }catch(e){}
       el.remove();
     }
@@ -80,7 +91,8 @@
     return `
       <div class="yoda-qp-modal" role="dialog" aria-modal="true">
         <div class="yoda-qp-head">
-          <p class="yoda-qp-title">${escapeHtml(cfg.title || 'Pagamento PIX')}</p>
+          <p class="yoda-qp-title">${escapeHtml(cfg.title || 'Pagamento via Pix')}</p>
+          <p class="yoda-qp-subtitle">Confirme seus dados para gerar o Pix e liberar a entrega automática das moedas.</p>
           <button class="yoda-qp-close" type="button" aria-label="${escapeHtml(cfg.close || 'Fechar')}">✕</button>
         </div>
         <div class="yoda-qp-body">
@@ -99,6 +111,12 @@
                 <input type="text" name="whatsapp" placeholder="(DDD) número" inputmode="numeric" autocomplete="tel" />
               </div>
             </div>
+          </div>
+
+          <div class="yoda-qp-steps" aria-label="Etapas">
+            <span class="yoda-qp-step on" data-step="1">1. Dados</span>
+            <span class="yoda-qp-step" data-step="2">2. Pagar</span>
+            <span class="yoda-qp-step" data-step="3">3. Entrega</span>
           </div>
 
           <div class="yoda-qp-user" data-userbox>
@@ -143,7 +161,7 @@
     return `
       <div class="yoda-qp-modal" role="dialog" aria-modal="true">
         <div class="yoda-qp-head">
-          <p class="yoda-qp-title">Pagamento PIX</p>
+          <p class="yoda-qp-title">Pagamento via Pix</p>
           <button class="yoda-qp-close" type="button" aria-label="${escapeHtml(cfg.close || 'Fechar')}">✕</button>
         </div>
         <div class="yoda-qp-body">
@@ -197,29 +215,222 @@
     el.textContent = text;
   }
 
+  function formatExpires(expires){
+    if (!expires) return '';
+    try{
+      var dt = new Date(expires);
+      if (!isNaN(dt.getTime())) return dt.toLocaleString();
+    }catch(e){}
+    return String(expires);
+  }
+
   function bindModalCommon(overlay){
-    qa('.yoda-qp-close,[data-cancel]', overlay).forEach(function(b){
+    qa('.yoda-qp-close', overlay).forEach(function(b){
+      try{ b.textContent = '×'; }catch(e){}
+      b.addEventListener('click', function(){ closeModal(); });
+    });
+    qa('[data-cancel]', overlay).forEach(function(b){
       b.addEventListener('click', function(){ closeModal(); });
     });
 
+    function toast(text){
+      try{
+        var old = q('.yoda-qp-toast');
+        if (old) old.remove();
+        var t = document.createElement('div');
+        t.className = 'yoda-qp-toast';
+        t.textContent = text || 'Copiado';
+        document.body.appendChild(t);
+        setTimeout(function(){ try{ t.remove(); }catch(e){} }, 1400);
+      }catch(e){}
+    }
+
+    function copyText(val){
+      if (!val) return false;
+      try{
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(val);
+          return true;
+        }
+      }catch(e){}
+      try{
+        var tmp = document.createElement('textarea');
+        tmp.value = val;
+        tmp.style.position = 'fixed';
+        tmp.style.left = '-9999px';
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        tmp.remove();
+        return true;
+      }catch(e){}
+      return false;
+    }
+
+    // Compat: botao antigo (copia do input do codigo Pix)
     var copyBtn = q('[data-copy-pix]', overlay);
-    if (copyBtn){
+    if (copyBtn && !copyBtn.hasAttribute('data-copy-text')){
       copyBtn.addEventListener('click', function(){
         try{
           var input = copyBtn.parentElement ? q('input', copyBtn.parentElement) : null;
           var val = input ? input.value : '';
           if (!val) return;
-          if (navigator.clipboard && navigator.clipboard.writeText){
-            navigator.clipboard.writeText(val);
-          } else if (input){
-            input.select();
-            document.execCommand('copy');
+          if (copyText(val)){
+            copyBtn.textContent = 'Copiado';
+            setTimeout(function(){ copyBtn.textContent = 'Copiar'; }, 1200);
+            toast('Copiado');
           }
-          copyBtn.textContent = 'Copiado';
-          setTimeout(function(){ copyBtn.textContent = 'Copiar'; }, 1200);
         }catch(e){}
       });
     }
+
+    // Novo: qualquer botao/elemento com data-copy-text="..."
+    qa('[data-copy-text]', overlay).forEach(function(btn){
+      btn.addEventListener('click', function(){
+        try{
+          var val = btn.getAttribute('data-copy-text') || '';
+          if (!val) return;
+          if (copyText(val)){
+            var oldTxt = btn.textContent;
+            btn.textContent = 'Copiado';
+            setTimeout(function(){ btn.textContent = oldTxt; }, 1200);
+            toast('Copiado');
+          }
+        }catch(e){}
+      });
+    });
+
+    // Melhorias visuais para o iframe do provedor (quando same-origin)
+    try{
+      var iframe = q('.yoda-qp-iframe', overlay);
+      if (iframe){
+        iframe.addEventListener('load', function(){
+          try{
+            var doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+            if (!doc) return;
+            var style = doc.createElement('style');
+            style.textContent = [
+              'html,body{background:#fff!important}',
+              'body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial!important}',
+              'header,footer,#masthead,#colophon,.site-header,.site-footer,.elementor-location-header,.elementor-location-footer{display:none!important}',
+              '.woocommerce-order, .woocommerce-notice{max-width:820px;margin:18px auto!important;padding:0 14px!important}',
+              '.woocommerce-order-overview{background:#fff!important;border:1px solid rgba(15,16,32,.10)!important;border-radius:16px!important;padding:12px!important}'
+            ].join('');
+            doc.head && doc.head.appendChild(style);
+          }catch(e){}
+        });
+      }
+    }catch(e){}
+  }
+
+  function enhancePixModal(overlay, cfg){
+    try{
+      var head = q('.yoda-qp-head', overlay);
+      if (head && !q('.yoda-qp-subtitle', head)){
+        var title = q('.yoda-qp-title', head);
+        if (title){
+          var sub = document.createElement('p');
+          sub.className = 'yoda-qp-subtitle';
+          sub.textContent = 'Finalize o pagamento para liberar as moedas na conta informada.';
+          title.insertAdjacentElement('afterend', sub);
+        }
+      }
+
+      var body = q('.yoda-qp-body', overlay);
+      if (body && !q('.yoda-qp-steps', body)){
+        var steps = document.createElement('div');
+        steps.className = 'yoda-qp-steps';
+        steps.setAttribute('aria-label', 'Etapas');
+        steps.innerHTML = '<span class=\"yoda-qp-step\" data-step=\"1\">1. Dados</span><span class=\"yoda-qp-step on\" data-step=\"2\">2. Pagar</span><span class=\"yoda-qp-step\" data-step=\"3\">3. Entrega</span>';
+        body.insertBefore(steps, body.firstChild);
+      }
+
+      var pay = q('.yoda-qp-pay', overlay);
+      if (!pay) return;
+
+      // Organiza a tela em 2 colunas (resumo/status a esquerda, pagamento a direita).
+      if (!q('.yoda-qp-paygrid', pay)){
+        var summary = q('.yoda-qp-summary', pay);
+        var user = q('[data-userbox]', pay);
+        var live = q('[data-live]', pay);
+        var hint = q('.yoda-qp-hint', pay);
+        var qr = q('.yoda-qp-qr', pay);
+        var code = q('.yoda-qp-code', pay);
+        var iframe = q('.yoda-qp-iframe', pay);
+
+        var grid = document.createElement('div');
+        grid.className = 'yoda-qp-paygrid';
+        var left = document.createElement('div');
+        var right = document.createElement('div');
+
+        if (summary) left.appendChild(summary);
+        if (user) left.appendChild(user);
+
+        if (live){
+          var statusCard = document.createElement('div');
+          statusCard.className = 'yoda-qp-card';
+          statusCard.style.marginTop = '10px';
+          statusCard.appendChild(live);
+
+          var exp = formatExpires(cfg && cfg.expires ? cfg.expires : '');
+          if (exp){
+            var expEl = document.createElement('p');
+            expEl.className = 'yoda-qp-hint';
+            expEl.style.marginTop = '8px';
+            expEl.innerHTML = 'Expira em: <strong>' + escapeHtml(exp) + '</strong>';
+            statusCard.appendChild(expEl);
+          }
+
+          var tip = document.createElement('p');
+          tip.className = 'yoda-qp-hint';
+          tip.style.marginTop = '8px';
+          tip.textContent = 'Apos pagar, a entrega acontece automaticamente (pode levar alguns segundos).';
+          statusCard.appendChild(tip);
+          left.appendChild(statusCard);
+        }
+
+        // botoes removidos por pedido
+
+        var payCard = document.createElement('div');
+        payCard.className = 'yoda-qp-card';
+        if (!hint){
+          hint = document.createElement('p');
+          hint.className = 'yoda-qp-hint';
+          hint.textContent = (qr || code)
+            ? 'Abra o app do seu banco e escaneie o QR Code, ou copie e cole o codigo Pix.'
+            : 'Use a pagina do provedor abaixo para concluir o pagamento.';
+        }
+        payCard.appendChild(hint);
+
+        if (qr) payCard.appendChild(qr);
+        if (code){
+          // Deixa o botao mais claro e compativel com o novo copy handler.
+          try{
+            var inpt = q('input', code);
+            var btn = q('button', code);
+            if (btn && inpt && inpt.value){
+              btn.textContent = 'Copiar codigo';
+              btn.setAttribute('data-copy-text', inpt.value);
+            }
+          }catch(e){}
+          payCard.appendChild(code);
+        }
+
+        if (iframe){
+          var wrap = document.createElement('div');
+          wrap.className = 'yoda-qp-iframewrap';
+          wrap.appendChild(iframe);
+          payCard.appendChild(wrap);
+        }
+
+        // Limpa o pay e remonta.
+        while (pay.firstChild) pay.removeChild(pay.firstChild);
+        right.appendChild(payCard);
+        grid.appendChild(left);
+        grid.appendChild(right);
+        pay.appendChild(grid);
+      }
+    }catch(e){}
   }
 
   function startDeliveryPolling(overlay, cfg){
@@ -252,8 +463,12 @@
           var live = q('[data-live]', overlay);
           if (delivered){
             if (live){
-              live.innerHTML = '<span class="yoda-qp-dot ok"></span><span>Entrega confirmada.</span>';
+              live.innerHTML = '<span class="yoda-qp-dot done"></span><span>Entrega confirmada.</span>';
             }
+            try{
+              var s3 = q('[data-step=\"3\"]', overlay);
+              if (s3) s3.classList.add('on');
+            }catch(e){}
             var pay = q('.yoda-qp-pay', overlay);
             if (pay && !q('.yoda-qp-success', pay)){
               var box = document.createElement('div');
@@ -270,6 +485,25 @@
               live.innerHTML = '<span class="yoda-qp-dot"></span><span>' + escapeHtml(txt) + '</span>';
             }
           }
+
+          // Ajustes visuais do status sem depender do texto do gateway.
+          try{
+            var paid = (r.data.wc_status && r.data.wc_status !== 'pending');
+            var dot = live ? q('.yoda-qp-dot', live) : null;
+            if (dot){
+              if (delivered){
+                dot.classList.add('done');
+                dot.classList.remove('ok');
+              } else if (paid){
+                dot.classList.add('ok');
+              }
+            }
+            if (paid){
+              var s2 = q('[data-step=\"2\"]', overlay);
+              if (s2) s2.classList.add('on');
+            }
+          }catch(e){}
+
         }).catch(function(){});
       }
 
@@ -401,8 +635,10 @@
           avatar: (kakoUser && kakoUser.avatar) ? kakoUser.avatar : '',
           nickname: (kakoUser && kakoUser.nickname) ? kakoUser.nickname : '',
           qrBase64: pix.qr_base64 || '',
-          qrCode: pix.qr_code || ''
+          qrCode: pix.qr_code || '',
+          expires: pix.expires || ''
         });
+        enhancePixModal(overlay, { payUrl: payUrl, expires: pix.expires || '' });
         bindModalCommon(overlay);
         startDeliveryPolling(overlay, { orderId: r.data.order_id, orderKey: r.data.order_key });
       }).finally(function(){
