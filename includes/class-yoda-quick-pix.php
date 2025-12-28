@@ -32,10 +32,17 @@ class Yoda_Quick_Pix {
     }
 
     wp_enqueue_script('yoda-quick-pix', plugins_url('../assets/yoda-quick-pix.js', __FILE__), [], '1.0', true);
+    $buy_again_url = 'https://agenciayoda.com.br/';
+    /**
+     * Permite customizar o destino do botão "Comprar novamente" após pagamento aprovado/entrega confirmada.
+     * Retorne uma URL absoluta (ou relativa) para a página de pacotes/loja.
+     */
+    $buy_again_url = apply_filters('yoda_quick_pix_buy_again_url', $buy_again_url);
     wp_localize_script('yoda-quick-pix', 'YodaQuickPix', [
       'restQuickPix' => rest_url('yoda/v1/quick/pix'),
       'restQuickStatus' => rest_url('yoda/v1/quick/status'),
       'restKakoUser' => rest_url('yoda/v1/kako/userinfo'),
+      'buyAgainUrl' => $buy_again_url,
       'texts' => [
         'title' => 'Insira seus dados para pagamento',
         'confirm' => 'Confirmar pagamento',
@@ -111,6 +118,9 @@ class Yoda_Quick_Pix {
     .yoda-qp-success h3{margin:0 0 6px; font-size:18px; font-weight:950; color:#0b6b37;}
     .yoda-qp-success p{margin:0; color:#14532d; font-size:13px;}
     .yoda-qp-success .ref{margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size:12px; color:#14532d;}
+    .yoda-qp-success .actions{margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    .yoda-qp-success-btn{display:inline-block; appearance:none; border:0; background:#0f1020; color:#fff; font-weight:950; font-size:13px; padding:10px 12px; border-radius:14px; cursor:pointer; text-decoration:none;}
+    .yoda-qp-success-btn:hover{filter:brightness(1.05);}
 
     .yoda-qp-toast{position:fixed; left:50%; bottom:18px; transform:translateX(-50%); padding:10px 12px; border-radius:14px; background:rgba(15,16,32,.92); color:#fff; font-weight:900; font-size:13px; z-index:1000000; box-shadow:0 16px 40px rgba(0,0,0,.35);}
 
@@ -373,10 +383,31 @@ class Yoda_Quick_Pix {
     // Processa pagamento (gera cobrança PIX)
     $result = null;
     try {
+      if (function_exists('wc_clear_notices')) {
+        wc_clear_notices();
+      }
       if (WC()->session) {
         WC()->session->set('chosen_payment_method', $gw_id);
       }
       $result = $gateway->process_payment($order->get_id());
+      if (class_exists('Yoda_Logger')) {
+        $notices_dbg = [];
+        if (function_exists('wc_get_notices')) {
+          foreach ((array) wc_get_notices() as $type => $items){
+            foreach ((array)$items as $item){
+              if (is_array($item) && isset($item['notice'])) $notices_dbg[] = '['.$type.'] '.wp_strip_all_tags((string)$item['notice']);
+              elseif (is_string($item)) $notices_dbg[] = '['.$type.'] '.wp_strip_all_tags($item);
+            }
+          }
+        }
+        Yoda_Logger::log('quick_pix_process_payment_response', [
+          'gateway_id' => $gw_id,
+          'result'     => is_array($result) ? $result : ['type' => gettype($result)],
+          'notices'    => $notices_dbg,
+          'order_total'=> (string) $order->get_total(),
+          'product_id' => $product_id,
+        ], $order->get_id(), 'info');
+      }
     } catch (Throwable $e){
       // restaura carrinho do usuário em caso de erro
       WC()->cart->empty_cart(true);
@@ -386,16 +417,66 @@ class Yoda_Quick_Pix {
       }
       return new WP_Error('gateway_error', 'Falha ao iniciar pagamento: '.$e->getMessage(), ['status'=>500]);
     }
-    if (!is_array($result) || empty($result['redirect'])){
+    $is_result_array = is_array($result);
+    $result_flag = $is_result_array ? strtolower((string)($result['result'] ?? '')) : '';
+    $redirect = $is_result_array ? (string)($result['redirect'] ?? '') : '';
+    $pay_url  = '';
+    if ($redirect !== ''){
+      $pay_url = add_query_arg('yoda_modal', '1', $redirect);
+    } else {
+      // Fallback: some gateways may not return a redirect URL.
+      if (method_exists($order, 'get_checkout_payment_url')) {
+        $fallback = (string) $order->get_checkout_payment_url(true);
+        if ($fallback) {
+          $pay_url = add_query_arg('yoda_modal', '1', $fallback);
+        }
+      }
+    }
+
+    $pix = $this->extract_pix_meta($order);
+
+    $has_pix = (!empty($pix['qr_code']) || !empty($pix['qr_base64']));
+    $has_link = ($redirect !== '' || $pay_url !== '' || $has_pix);
+
+    if (!$has_link){
+      $notices = [];
+      if (function_exists('wc_get_notices')) {
+        foreach ((array) wc_get_notices('error') as $n){
+          if (is_array($n) && isset($n['notice'])) $notices[] = wp_strip_all_tags((string)$n['notice']);
+          elseif (is_string($n)) $notices[] = wp_strip_all_tags($n);
+        }
+      }
+      if (class_exists('Yoda_Logger')) {
+        Yoda_Logger::log('quick_pix_gateway_no_redirect', [
+          'gateway_id' => $gw_id,
+          'result'     => $is_result_array ? $result : ['type' => gettype($result)],
+          'result_flag'=> $result_flag,
+          'notices'    => $notices,
+          'pix_meta'   => [
+            'has_qr_base64' => !empty($pix['qr_base64']),
+            'has_qr_code'   => !empty($pix['qr_code']),
+            'expires'       => !empty($pix['expires']) ? $pix['expires'] : '',
+          ],
+        ], $order->get_id(), 'error');
+      }
+
       WC()->cart->empty_cart(true);
       foreach ((array)$oldCart as $item){
         if (empty($item['product_id']) || empty($item['quantity'])) continue;
         WC()->cart->add_to_cart((int)$item['product_id'], (int)$item['quantity'], (int)($item['variation_id'] ?? 0), (array)($item['variation'] ?? []));
       }
-      return new WP_Error('gateway_error', 'Gateway não retornou URL de pagamento.', ['status'=>500]);
+      $msg = $notices ? implode(' ', array_slice($notices, 0, 3)) : 'Gateway nao retornou URL de pagamento.';
+      return new WP_Error('gateway_error', $msg, ['status'=>500]);
     }
 
-    $pay_url = add_query_arg('yoda_modal', '1', $result['redirect']);
+    // Caso o gateway retorne "failure" mas tenhamos um link/QR para mostrar, apenas logamos aviso.
+    if ($result_flag !== '' && $result_flag !== 'success' && class_exists('Yoda_Logger')){
+      Yoda_Logger::log('quick_pix_gateway_non_success', [
+        'gateway_id' => $gw_id,
+        'result'     => $is_result_array ? $result : ['type' => gettype($result)],
+        'result_flag'=> $result_flag,
+      ], $order->get_id(), 'warning');
+    }
 
     // Restaura carrinho anterior (não queremos deixar produto no carrinho porque o fluxo é por modal)
     WC()->cart->empty_cart(true);

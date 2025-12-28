@@ -136,6 +136,13 @@ class Yoda_Packs {
     .yoda-verify .yoda-button{background:linear-gradient(90deg,#f4a6ff,#7a31ff); border:none; color:#fff; font-weight:900; padding:12px 18px; border-radius:10px; cursor:pointer;}
     .yoda-verify input{width:100%; padding:12px 14px; border-radius:10px; border:1px solid #e5e5e5; background:#fff;}
     .yoda-help{font-size:13px; color:#777; margin-top:6px}
+
+    .yoda-a2hs{margin-top:16px;}
+    .yoda-a2hs-inner{display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid #eee; background:#fff; border-radius:14px; padding:14px 14px; box-shadow:0 10px 30px rgba(0,0,0,.06);}
+    .yoda-a2hs-text{font-size:13px; color:#666; line-height:1.25;}
+    .yoda-a2hs-btn{appearance:none; border:0; background:rgba(122,49,255,.10); color:#7a31ff; font-weight:950; font-size:13px; padding:10px 12px; border-radius:12px; cursor:pointer; white-space:nowrap;}
+    .yoda-a2hs-btn:hover{background:rgba(122,49,255,.14);}
+    .yoda-a2hs-tip{display:none; margin-top:10px; font-size:12px; color:#666; line-height:1.35;}
     ";
     wp_register_style('yoda-packs-inline', false);
     wp_enqueue_style('yoda-packs-inline');
@@ -149,6 +156,12 @@ class Yoda_Packs {
         'checking'  => 'Verificando…',
         'ok'        => 'Conta verificada!',
         'fail'      => 'ID inválido ou não encontrado.',
+      ],
+      'a2hs' => [
+        'msg' => 'Adicione à Tela de Início para facilitar a próxima recarga',
+        'btn' => 'Adicionar',
+        'tip_ios' => 'No iPhone: toque em Compartilhar e depois em “Adicionar à Tela de Início”.',
+        'tip_other' => 'No navegador: abra o menu e toque em “Adicionar à tela inicial”.',
       ],
     ]);
   }
@@ -227,6 +240,14 @@ class Yoda_Packs {
       <?php if (!$products): ?>
         <p class="yoda-help">Nenhum pacote configurado. Adicione produtos com meta <code>_yoda_coins_amount</code>.</p>
       <?php endif; ?>
+
+      <div class="yoda-a2hs" id="yoda-a2hs" style="display:none">
+        <div class="yoda-a2hs-inner">
+          <div class="yoda-a2hs-text" data-yoda-a2hs-msg>Adicione à Tela de Início para facilitar a próxima recarga</div>
+          <button type="button" class="yoda-a2hs-btn" data-yoda-a2hs>Adicionar</button>
+        </div>
+        <div class="yoda-a2hs-tip" data-yoda-a2hs-tip></div>
+      </div>
     </div>
     <?php
     return ob_get_clean();

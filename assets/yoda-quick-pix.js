@@ -194,11 +194,34 @@
   }
 
   function buildDeliveredBox(cfg){
+    var buyAgainUrl = '';
+    try{
+      buyAgainUrl = (window.YodaQuickPix && YodaQuickPix.buyAgainUrl) ? String(YodaQuickPix.buyAgainUrl) : '';
+    }catch(e){ buyAgainUrl = ''; }
     return `
-      <div class="yoda-qp-success">
+      <div class="yoda-qp-success yoda-qp-delivered">
         <h3>Moedas entregues com sucesso</h3>
         <p>Pagamento confirmado e moedas depositadas na conta informada.</p>
         ${cfg.orderRef ? `<div class="ref">Protocolo: ${escapeHtml(cfg.orderRef)}</div>` : ``}
+        <div class="actions">
+          ${buyAgainUrl ? `<a class="yoda-qp-success-btn" data-buy-again href="${escapeHtml(buyAgainUrl)}" target="_blank" rel="noopener noreferrer">Comprar novamente</a>` : ``}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildPaidBox(){
+    var buyAgainUrl = '';
+    try{
+      buyAgainUrl = (window.YodaQuickPix && YodaQuickPix.buyAgainUrl) ? String(YodaQuickPix.buyAgainUrl) : '';
+    }catch(e){ buyAgainUrl = ''; }
+    return `
+      <div class="yoda-qp-success yoda-qp-paid">
+        <h3>Pagamento confirmado</h3>
+        <p>Seu pagamento foi confirmado. A entrega acontece automaticamente (pode levar alguns segundos).</p>
+        <div class="actions">
+          ${buyAgainUrl ? `<a class="yoda-qp-success-btn" data-buy-again href="${escapeHtml(buyAgainUrl)}" target="_blank" rel="noopener noreferrer">Comprar novamente</a>` : ``}
+        </div>
       </div>
     `;
   }
@@ -232,6 +255,33 @@
     qa('[data-cancel]', overlay).forEach(function(b){
       b.addEventListener('click', function(){ closeModal(); });
     });
+
+    // Delegation: o botão pode ser inserido depois (quando o polling confirmar).
+    overlay.addEventListener('click', function(ev){
+      try{
+        var t = ev && ev.target ? ev.target : null;
+        if (!t) return;
+        var a = (t.closest && t.closest('[data-buy-again]')) ? t.closest('[data-buy-again]') : null;
+        if (!a || !overlay.contains(a)) return;
+
+        var href = '';
+        try{ href = String(a.getAttribute('href') || ''); }catch(e){ href = ''; }
+        if (!href){
+          try{ href = (window.YodaQuickPix && YodaQuickPix.buyAgainUrl) ? String(YodaQuickPix.buyAgainUrl) : ''; }catch(e){ href = ''; }
+        }
+
+        // Abre em nova aba e fecha o modal (evita ficar preso no hash no mobile).
+        try{ if (ev && ev.preventDefault) ev.preventDefault(); }catch(e){}
+        if (href){
+          var w = null;
+          try{ w = window.open(href, '_blank', 'noopener'); }catch(e){ w = null; }
+          if (!w){
+            try{ window.location.href = href; }catch(e){}
+          }
+        }
+        closeModal();
+      }catch(e){}
+    }, true);
 
     function toast(text){
       try{
@@ -384,8 +434,14 @@
           var tip = document.createElement('p');
           tip.className = 'yoda-qp-hint';
           tip.style.marginTop = '8px';
-          tip.textContent = 'Apos pagar, a entrega acontece automaticamente (pode levar alguns segundos).';
+          tip.textContent = 'Após pagar, a entrega acontece automaticamente (pode levar alguns segundos).';
           statusCard.appendChild(tip);
+
+          var proof = document.createElement('p');
+          proof.className = 'yoda-qp-hint';
+          proof.style.marginTop = '6px';
+          proof.textContent = 'Não é necessário enviar o comprovante no WhatsApp, as moedas entram automaticamente em sua conta.';
+          statusCard.appendChild(proof);
           left.appendChild(statusCard);
         }
 
@@ -460,6 +516,7 @@
         }).then(function(r){
           if (!(r && r.ok && r.data)) return;
           var delivered = !!r.data.delivered;
+          var paid = (r.data.wc_status && r.data.wc_status !== 'pending');
           var live = q('[data-live]', overlay);
           if (delivered){
             if (live){
@@ -470,7 +527,11 @@
               if (s3) s3.classList.add('on');
             }catch(e){}
             var pay = q('.yoda-qp-pay', overlay);
-            if (pay && !q('.yoda-qp-success', pay)){
+            try{
+              var paidBox = pay ? q('.yoda-qp-paid', pay) : null;
+              if (paidBox) paidBox.remove();
+            }catch(e){}
+            if (pay && !q('.yoda-qp-delivered', pay)){
               var box = document.createElement('div');
               box.innerHTML = buildDeliveredBox({ orderRef: r.data.order_ref || '' });
               pay.insertBefore(box.firstElementChild, pay.firstChild);
@@ -484,11 +545,25 @@
               if (r.data.wc_status && r.data.wc_status !== 'pending') txt = 'Pagamento recebido, aguardando entrega…';
               live.innerHTML = '<span class="yoda-qp-dot"></span><span>' + escapeHtml(txt) + '</span>';
             }
+            // Se o pagamento foi confirmado, mostra o CTA mesmo antes da entrega.
+            if (paid){
+              try{
+                var pay = q('.yoda-qp-pay', overlay);
+                if (pay && !q('.yoda-qp-paid', pay) && !q('.yoda-qp-delivered', pay)){
+                  var box = document.createElement('div');
+                  box.innerHTML = buildPaidBox();
+                  pay.insertBefore(box.firstElementChild, pay.firstChild);
+                  try{
+                    var el = q('.yoda-qp-paid', pay);
+                    if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'start' });
+                  }catch(e){}
+                }
+              }catch(e){}
+            }
           }
 
           // Ajustes visuais do status sem depender do texto do gateway.
           try{
-            var paid = (r.data.wc_status && r.data.wc_status !== 'pending');
             var dot = live ? q('.yoda-qp-dot', live) : null;
             if (dot){
               if (delivered){

@@ -100,7 +100,111 @@
     });
   });
 
-  $(function(){ ensureUnlockedFromCookie(); });
+  function isStandalone(){
+    try{
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+    }catch(e){}
+    try{
+      if (window.navigator && window.navigator.standalone) return true; // iOS
+    }catch(e){}
+    return false;
+  }
+
+  function isIOS(){
+    try{
+      var ua = navigator.userAgent || '';
+      if (/iPad|iPhone|iPod/i.test(ua)) return true;
+      // iPadOS (Safari) pode se identificar como Mac
+      if ((navigator.platform || '') === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1) return true;
+    }catch(e){}
+    return false;
+  }
+
+  function isMobile(){
+    try{
+      var ua = navigator.userAgent || '';
+      if (/Android|iPhone|iPad|iPod/i.test(ua)) return true;
+    }catch(e){}
+    try{
+      if (window.matchMedia && window.matchMedia('(max-width: 820px)').matches) return true;
+    }catch(e){}
+    return false;
+  }
+
+  function initA2HS(){
+    var $bar = $('#yoda-a2hs');
+    if (!$bar.length) return;
+
+    try{
+      var msg = (YodaPacks && YodaPacks.a2hs && YodaPacks.a2hs.msg) ? String(YodaPacks.a2hs.msg) : '';
+      var btn = (YodaPacks && YodaPacks.a2hs && YodaPacks.a2hs.btn) ? String(YodaPacks.a2hs.btn) : '';
+      if (msg) $bar.find('[data-yoda-a2hs-msg]').text(msg);
+      if (btn) $bar.find('[data-yoda-a2hs]').text(btn);
+    }catch(e){}
+
+    if (!isMobile() || isStandalone()){
+      $bar.hide();
+      return;
+    }
+
+    var deferredPrompt = null;
+    var $tip = $bar.find('[data-yoda-a2hs-tip]');
+
+    function showTip(text){
+      if (!$tip.length) return;
+      $tip.text(text || '').toggle(!!text);
+      if (text){
+        try{ clearTimeout($tip.data('t')); }catch(e){}
+        var t = setTimeout(function(){ try{ $tip.hide(); }catch(e){} }, 8000);
+        try{ $tip.data('t', t); }catch(e){}
+      }
+    }
+
+    function showBar(){
+      try{ $bar.show(); }catch(e){}
+    }
+
+    window.addEventListener('beforeinstallprompt', function(e){
+      try{ e.preventDefault(); }catch(err){}
+      deferredPrompt = e;
+      showBar();
+    });
+
+    window.addEventListener('appinstalled', function(){
+      deferredPrompt = null;
+      try{ $bar.hide(); }catch(e){}
+    });
+
+    // Mostra por padrão no mobile (iOS não dispara beforeinstallprompt)
+    showBar();
+
+    $bar.on('click', '[data-yoda-a2hs]', function(){
+      if (deferredPrompt && deferredPrompt.prompt){
+        try{
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice && deferredPrompt.userChoice.finally && deferredPrompt.userChoice.finally(function(){
+            deferredPrompt = null;
+          });
+        }catch(e){}
+        return;
+      }
+
+      var tip = '';
+      try{
+        if (isIOS()){
+          tip = (YodaPacks && YodaPacks.a2hs && YodaPacks.a2hs.tip_ios) ? String(YodaPacks.a2hs.tip_ios) : '';
+        } else {
+          tip = (YodaPacks && YodaPacks.a2hs && YodaPacks.a2hs.tip_other) ? String(YodaPacks.a2hs.tip_other) : '';
+        }
+      }catch(e){ tip = ''; }
+      showTip(tip || 'Abra o menu do navegador e adicione à tela inicial.');
+    });
+  }
+
+  $(function(){
+    ensureUnlockedFromCookie();
+    initA2HS();
+  });
 
   // Se o usuário verificar via [yoda_kako_card], destrava os packs em tempo real.
   try{
