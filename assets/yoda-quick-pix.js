@@ -193,6 +193,31 @@
     `;
   }
 
+  function buildMaintenanceModal(cfg){
+    var msg = '';
+    var wa = '';
+    try{
+      msg = (cfg && cfg.message) ? String(cfg.message) : '';
+      wa = (cfg && cfg.whatsAppUrl) ? String(cfg.whatsAppUrl) : '';
+    }catch(e){ msg = ''; wa = ''; }
+
+    if (!msg){
+      try{ msg = (window.YodaQuickPix && YodaQuickPix.maintenanceMsg) ? String(YodaQuickPix.maintenanceMsg) : ''; }catch(e){ msg = ''; }
+    }
+    if (!wa){
+      try{ wa = (window.YodaQuickPix && YodaQuickPix.whatsAppUrl) ? String(YodaQuickPix.whatsAppUrl) : ''; }catch(e){ wa = ''; }
+    }
+
+    return `
+      <div class="yoda-qp-modal yoda-qp-maint" role="dialog" aria-modal="true">
+        <p class="yoda-qp-maint-msg">${escapeHtml(msg)}</p>
+        <div class="yoda-qp-maint-actions">
+          <a class="yoda-qp-maint-wa" href="${escapeHtml(wa)}" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+        </div>
+      </div>
+    `;
+  }
+
   function buildDeliveredBox(cfg){
     var buyAgainUrl = '';
     try{
@@ -688,7 +713,21 @@
         }),
         credentials: 'same-origin'
       }).then(function(r){
+        function isMaintenance(resp){
+          try{
+            if (!resp) return false;
+            if (String(resp.code || '') === 'yoda_maintenance') return true;
+            var reason = (resp.data && resp.data.reason) ? String(resp.data.reason) : '';
+            return (reason === 'insufficient_balance' || reason === 'balance_unavailable' || reason === 'missing_kako_creds');
+          }catch(e){ return false; }
+        }
+
         if (!(r && r.ok && r.data)){
+          if (isMaintenance(r)){
+            overlay.innerHTML = buildMaintenanceModal({ message: (r && r.message) ? r.message : '', whatsAppUrl: '' });
+            bindModalCommon(overlay);
+            return;
+          }
           var msg = (r && r.message) ? r.message : ((r && r.data && r.data.msg) ? r.data.msg : 'Não foi possível gerar o PIX.');
           setMsg(modal, msg);
           return;

@@ -6,6 +6,9 @@ class Yoda_Quick_Pix {
   const RL_WINDOW = MINUTE_IN_SECONDS;
   const RL_MAX    = 20;
 
+  const MAINTENANCE_MSG = 'Sistema está em manutenção, por favor entre em contato com o suporte pelo WhatsApp';
+  const WHATSAPP_URL = 'https://api.whatsapp.com/send/?phone=5575997121910&text=Ol%C3%A1%2C+vim+da+tela+de+Manuten%C3%A7%C3%A3o+da+Coin+Seller+Yoda.&type=phone_number&app_absent=0';
+
   public function hooks(){
     add_action('rest_api_init', [$this, 'register_rest_routes']);
     add_action('wp_enqueue_scripts', [$this, 'enqueue_assets']);
@@ -31,7 +34,7 @@ class Yoda_Quick_Pix {
       return;
     }
 
-    wp_enqueue_script('yoda-quick-pix', plugins_url('../assets/yoda-quick-pix.js', __FILE__), [], '1.0', true);
+    wp_enqueue_script('yoda-quick-pix', plugins_url('../assets/yoda-quick-pix.js', __FILE__), [], '1.1', true);
     $buy_again_url = 'https://agenciayoda.com.br/';
     /**
      * Permite customizar o destino do botão "Comprar novamente" após pagamento aprovado/entrega confirmada.
@@ -43,6 +46,8 @@ class Yoda_Quick_Pix {
       'restQuickStatus' => rest_url('yoda/v1/quick/status'),
       'restKakoUser' => rest_url('yoda/v1/kako/userinfo'),
       'buyAgainUrl' => $buy_again_url,
+      'maintenanceMsg' => apply_filters('yoda_quick_pix_maintenance_msg', self::MAINTENANCE_MSG),
+      'whatsAppUrl' => apply_filters('yoda_quick_pix_whatsapp_url', self::WHATSAPP_URL),
       'texts' => [
         'title' => 'Insira seus dados para pagamento',
         'confirm' => 'Confirmar pagamento',
@@ -124,6 +129,12 @@ class Yoda_Quick_Pix {
 
     .yoda-qp-toast{position:fixed; left:50%; bottom:18px; transform:translateX(-50%); padding:10px 12px; border-radius:14px; background:rgba(15,16,32,.92); color:#fff; font-weight:900; font-size:13px; z-index:1000000; box-shadow:0 16px 40px rgba(0,0,0,.35);}
 
+    .yoda-qp-maint{width:min(520px, 92vw); height:auto; border-radius:20px; padding:22px 18px;}
+    .yoda-qp-maint .yoda-qp-maint-msg{margin:0; font-size:14px; font-weight:900; color:#0f1020; line-height:1.45; text-align:center;}
+    .yoda-qp-maint .yoda-qp-maint-actions{margin-top:14px; display:flex; justify-content:center;}
+    .yoda-qp-maint .yoda-qp-maint-wa{display:inline-block; appearance:none; border:0; background:#25D366; color:#0b2f1a; font-weight:950; font-size:13px; padding:10px 14px; border-radius:999px; cursor:pointer; text-decoration:none;}
+    .yoda-qp-maint .yoda-qp-maint-wa:hover{filter:brightness(1.03);}
+
     @media (max-width:520px){
       .yoda-qp-overlay{padding:0; align-items:stretch; justify-content:stretch;}
       .yoda-qp-modal{width:100vw; height:100vh; border-radius:0; border:0;}
@@ -160,6 +171,108 @@ class Yoda_Quick_Pix {
       return new WP_Error('rate_limited', 'Muitas tentativas. Aguarde um minuto e tente novamente.', ['status'=>429]);
     }
     return true;
+  }
+
+  private function get_effective_creds(){
+    $opts   = get_option(Yoda_Admin::OPT_KEY, []);
+    $appId  = (defined('KAKO_APP_ID')  && KAKO_APP_ID)  ? KAKO_APP_ID  : ($opts['app_id']  ?? '');
+    $appKey = (defined('KAKO_APP_KEY') && KAKO_APP_KEY) ? KAKO_APP_KEY : ($opts['app_key'] ?? '');
+    if (defined('KAKO_API_BASE') && KAKO_API_BASE) {
+      $base = KAKO_API_BASE;
+    } else {
+      $base = $opts['base'] ?? '';
+      if (!$base){
+        $mode = $opts['mode'] ?? 'sandbox';
+        $base = ($mode === 'production') ? 'https://api.kako.live' : 'https://api-test.kako.live';
+      }
+    }
+    return [$appId,$appKey,$base];
+  }
+
+  private function maintenance_msg(){
+    return (string) apply_filters('yoda_quick_pix_maintenance_msg', self::MAINTENANCE_MSG);
+  }
+
+  private function extract_balance_amount($res){
+    if (is_wp_error($res)) return null;
+    $json = $res['json'] ?? null;
+    if (!is_array($json)) return null;
+    if (($json['code'] ?? -1) !== 0) return null;
+
+    $data = $json['data'] ?? null;
+    $amount = null;
+
+    if (is_numeric($data)){
+      $amount = (int) $data;
+    } elseif (is_array($data)){
+      $candidates = ['amount','balance','available','coins','coin','remain','remaining','left','total'];
+      foreach ($candidates as $k){
+        if (isset($data[$k]) && is_numeric($data[$k])){
+          $amount = (int) $data[$k];
+          break;
+        }
+      }
+      if ($amount === null){
+        foreach ($data as $v){
+          if (is_numeric($v)){
+            $amount = (int) $v;
+            break;
+          }
+        }
+      }
+    }
+
+    $amount = apply_filters('yoda_kako_balance_amount', $amount, $res);
+    if ($amount === null) return null;
+    return max(0, (int) $amount);
+  }
+
+  private function get_cached_seller_balance_amount(Yoda_Kako_Client $client, $base, $appId){
+    $key = 'yoda_kako_balance_amount_'.md5((string)$base.'|'.(string)$appId);
+    $cached = get_transient($key);
+    if ($cached !== false && is_numeric($cached)) return max(0, (int) $cached);
+
+    $res = $client->balance();
+    $amount = $this->extract_balance_amount($res);
+    if ($amount !== null){
+      $ttl = (int) apply_filters('yoda_quick_pix_balance_cache_ttl', 10);
+      if ($ttl > 0) set_transient($key, $amount, $ttl);
+    }
+    return $amount;
+  }
+
+  private function quick_pix_balance_guard_error($required_coins){
+    $enabled = apply_filters('yoda_quick_pix_balance_guard', true, (int)$required_coins);
+    if (!$enabled) return null;
+
+    if (!class_exists('Yoda_Kako_Client')) return null;
+
+    list($appId,$appKey,$base) = $this->get_effective_creds();
+    if (!$appId || !$appKey){
+      return new WP_Error('yoda_maintenance', $this->maintenance_msg(), ['status'=>503, 'reason'=>'missing_kako_creds']);
+    }
+
+    $client = new Yoda_Kako_Client($base, $appId, $appKey);
+    $balance = $this->get_cached_seller_balance_amount($client, $base, $appId);
+
+    if ($balance === null){
+      $block_on_err = apply_filters('yoda_quick_pix_block_on_balance_check_error', true);
+      if ($block_on_err){
+        return new WP_Error('yoda_maintenance', $this->maintenance_msg(), ['status'=>503, 'reason'=>'balance_unavailable']);
+      }
+      return null;
+    }
+
+    if ($balance < (int)$required_coins){
+      return new WP_Error('yoda_maintenance', $this->maintenance_msg(), [
+        'status'   => 503,
+        'reason'   => 'insufficient_balance',
+        'required' => (int) $required_coins,
+        'balance'  => (int) $balance,
+      ]);
+    }
+
+    return null;
   }
 
   public function rest_status(WP_REST_Request $req){
@@ -320,6 +433,9 @@ class Yoda_Quick_Pix {
     if ($coins <= 0){
       return new WP_Error('bad_request', 'Produto não é um pacote de moedas.', ['status'=>400]);
     }
+
+    $bal_err = $this->quick_pix_balance_guard_error($coins);
+    if (is_wp_error($bal_err)) return $bal_err;
 
     $gw_id = $this->pick_pix_gateway_id();
     if (!$gw_id){
