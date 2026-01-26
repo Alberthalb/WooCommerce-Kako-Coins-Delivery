@@ -42,6 +42,7 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - `[yoda_kako_portal]`: lista pedidos e status de entrega por KakoID (e email, exceto se `YODA_ID_ONLY_PORTAL` for true). Debug opcional `YODA_PORTAL_DEBUG` para admins.
 - `[yoda_affiliate_portal]`: portal exclusivo do revendedor (requer login e role `yoda_affiliate`).
 - `[yoda_cashback_portal]`: portal do cashback (requer login).
+- `[yoda_raffles]`: lista sorteios abertos e permite inscrição (requer login).
 
 ## Sistema de Revendedores (Afiliados)
 - Ative e configure em **Yoda → Revendedores** (taxa padrão, base de cálculo, dias de liberação, cookie, parâmetro do link).
@@ -58,6 +59,12 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - Resgate mínimo padrão: **5.000 moedas** (configurável).
 - Resgate faz um `transout` para o KakoID informado (pré-preenche com o último KakoID usado nas compras do cliente).
 - Se o pedido for cancelado/reembolsado (`refunded/cancelled/failed`), o cashback daquele pedido é estornado.
+
+## Sistema de Sorteios
+- Módulo inicial (regras ainda não definidas): cria **Sorteios** e **Inscrições** via CPTs.
+- Admin: crie um post em **Yoda → Sorteios**, marque meta `_yoda_status=open` para abrir (e opcionalmente `_yoda_start_at` / `_yoda_end_at` como timestamps).
+- Cliente: **Minha Conta → Sorteios** ou shortcode `[yoda_raffles]` para ver sorteios abertos e participar.
+- Limite por usuário: meta `_yoda_max_entries_per_user` (padrão 1).
 
 ## Logs (opcional)
 - Habilite com `define('YODA_LOGS', true);` em wp-config.php.
