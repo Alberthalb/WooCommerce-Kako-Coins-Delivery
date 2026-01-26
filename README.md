@@ -41,6 +41,7 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - `[yoda_kako_logout]`: limpa cookie `yoda_kako_id`; atributos opcionais `redirect`, `label`, `confirm`, `icon`, `class`.
 - `[yoda_kako_portal]`: lista pedidos e status de entrega por KakoID (e email, exceto se `YODA_ID_ONLY_PORTAL` for true). Debug opcional `YODA_PORTAL_DEBUG` para admins.
 - `[yoda_affiliate_portal]`: portal exclusivo do revendedor (requer login e role `yoda_affiliate`).
+- `[yoda_cashback_portal]`: portal do cashback (requer login).
 
 ## Sistema de Revendedores (Afiliados)
 - Ative e configure em **Yoda → Revendedores** (taxa padrão, base de cálculo, dias de liberação, cookie, parâmetro do link).
@@ -49,6 +50,14 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - O pedido guarda o revendedor em `_yoda_affiliate_id` e `_yoda_affiliate_code`.
 - A comissão é criada quando o pedido entra em `processing` ou `completed` e fica como **a liberar**; após o prazo configurado, o cron diário marca como **liberada**.
 - Se o pedido for `refunded/cancelled/failed`, a comissão é marcada como **estornada**.
+
+## Sistema de Cashback (bonificações)
+- Configure em **Yoda → Cashback**.
+- Regra padrão: **1,2%** de cashback em moedas sobre o total de moedas entregue no pedido (ex.: 1.000.000 → 12.000).
+- Cashback é creditado quando a entrega na Kako fica `delivered` e é lançado no extrato (`yoda_cashback_txn`).
+- Resgate mínimo padrão: **5.000 moedas** (configurável).
+- Resgate faz um `transout` para o KakoID informado (pré-preenche com o último KakoID usado nas compras do cliente).
+- Se o pedido for cancelado/reembolsado (`refunded/cancelled/failed`), o cashback daquele pedido é estornado.
 
 ## Logs (opcional)
 - Habilite com `define('YODA_LOGS', true);` em wp-config.php.

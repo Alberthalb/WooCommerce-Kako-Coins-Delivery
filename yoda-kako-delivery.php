@@ -27,6 +27,8 @@ require_once __DIR__.'/includes/class-yoda-checkout-extras.php';
 require_once __DIR__.'/includes/class-yoda-webhooks.php';
 require_once __DIR__.'/includes/class-yoda-quick-pix.php';
 require_once __DIR__.'/includes/class-yoda-affiliates.php';
+require_once __DIR__.'/includes/class-yoda-cashback.php';
+require_once __DIR__.'/includes/class-yoda-raffles.php';
 
 // Hooks principais
 add_action('plugins_loaded', function () {
@@ -64,17 +66,31 @@ add_action('plugins_loaded', function () {
   (new Yoda_Webhooks())->hooks();
   (new Yoda_Quick_Pix())->hooks();
   (new Yoda_Affiliates())->hooks();
+  (new Yoda_Cashback())->hooks();
+  (new Yoda_Raffles())->hooks();
 });
 
 register_activation_hook(__FILE__, function(){
   if (class_exists('Yoda_Affiliates')) {
     Yoda_Affiliates::on_activate();
   }
+  if (class_exists('Yoda_Cashback')) {
+    Yoda_Cashback::on_activate();
+  }
+  if (class_exists('Yoda_Raffles')) {
+    Yoda_Raffles::on_activate();
+  }
 });
 
 register_deactivation_hook(__FILE__, function(){
   if (class_exists('Yoda_Affiliates')) {
     Yoda_Affiliates::on_deactivate();
+  }
+  if (class_exists('Yoda_Cashback')) {
+    Yoda_Cashback::on_deactivate();
+  }
+  if (class_exists('Yoda_Raffles')) {
+    Yoda_Raffles::on_deactivate();
   }
 });
 
