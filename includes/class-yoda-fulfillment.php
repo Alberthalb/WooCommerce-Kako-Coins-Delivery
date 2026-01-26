@@ -6,6 +6,41 @@ class Yoda_Fulfillment {
   const META_ORDER_REF   = '_yoda_order_ref';        // nosso orderId/idempotente
   const META_DELIV_STAT  = '_yoda_delivery_status';  // delivered|failed|queued|needs_review
   const META_HOLD_UNTIL  = '_yoda_hold_until';       // timestamp para segurar entrega
+  const META_AUTOCOMPLETE_OK = '_yoda_autocomplete_ok'; // marcado quando a entrega foi confirmada por este plugin
+  const META_IDEMPOTENCY_NOTED = '_yoda_idempotency_noted';
+
+  private function skip_fulfill_transient_key($order_id){
+    return 'yoda_skip_fulfill_'.$order_id;
+  }
+
+  private function should_skip_fulfill_by_status($order_id){
+    $key = $this->skip_fulfill_transient_key($order_id);
+    $v = get_transient($key);
+    if ($v){
+      delete_transient($key);
+      return true;
+    }
+    return false;
+  }
+
+  private function maybe_mark_completed(WC_Order $order){
+    $enabled = apply_filters('yoda_auto_complete_on_delivery', true, $order);
+    if (!$enabled) return;
+
+    // Por padrǭo, sǿ aplica em pedidos "novos" (entregues apǿs esta atualizaÇǭo).
+    $require_flag = apply_filters('yoda_auto_complete_on_delivery_require_flag', true, $order);
+    if ($require_flag){
+      $ok = get_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, true);
+      if (empty($ok)) return;
+    }
+
+    $status = (string) $order->get_status();
+    if ($status !== 'processing') return;
+
+    // Evita loop: update_status('completed') dispara hook de status e re-entra no fulfill.
+    set_transient($this->skip_fulfill_transient_key($order->get_id()), 1, 30);
+    $order->update_status('completed');
+  }
 
   public function hooks(){
     // Dispara quando o pagamento é marcado como completo
@@ -46,6 +81,7 @@ class Yoda_Fulfillment {
 
   // quando status vira processing/completed manualmente
   public function maybe_fulfill_by_status($order_id, $order){
+    if ($this->should_skip_fulfill_by_status((int)$order_id)) return;
     if ($order instanceof WC_Order){
       $this->fulfill($order, false);
     }
@@ -76,7 +112,12 @@ class Yoda_Fulfillment {
     // 1) idempotência: se já entregue e não for “force”, sai
     $already = get_post_meta($order->get_id(), self::META_DELIV_STAT, true);
     if ($already === 'delivered' && !$force){
-      $order->add_order_note('Yoda Kako: já entregue (idempotência).');
+      $noted = get_post_meta($order->get_id(), self::META_IDEMPOTENCY_NOTED, true);
+      if (empty($noted)){
+        $order->add_order_note('Yoda Kako: já entregue (idempotência).');
+        update_post_meta($order->get_id(), self::META_IDEMPOTENCY_NOTED, 1);
+      }
+      $this->maybe_mark_completed($order);
       return;
     }
 
@@ -168,6 +209,7 @@ class Yoda_Fulfillment {
     // 8) tratar respostas padrão (SUCESSO)
     if ($code === 0 && (int)$status === 2){
       update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
+      update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
       $order->add_order_note("Yoda Kako: entregue ✅ | amount={$amount} | orderId={$orderRef}");
 
       // envia e-mail ao cliente (AQUI VAI O TRECHO QUE VOCÊ CITOU)
@@ -175,8 +217,7 @@ class Yoda_Fulfillment {
         Yoda_Email::send_delivery_email($order, $amount, $orderRef);
       }
 
-      // opcional: marcar como concluído
-      // $order->update_status('completed');
+      $this->maybe_mark_completed($order);
       return;
     }
 
@@ -186,12 +227,15 @@ class Yoda_Fulfillment {
       $qrStatus = $qr['json']['data']['status'] ?? 0;
       if ((int)$qrStatus === 2){
         update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
+        update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
         $order->add_order_note("Yoda Kako: confirmada via transqry (dup) ✅ | orderId={$orderRef}");
 
         // também envia e-mail quando confirmado via transqry
         if (class_exists('Yoda_Email')) {
           Yoda_Email::send_delivery_email($order, $amount, $orderRef);
         }
+
+        $this->maybe_mark_completed($order);
         return;
       }
     }

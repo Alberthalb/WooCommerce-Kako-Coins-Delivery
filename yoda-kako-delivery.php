@@ -26,6 +26,7 @@ require_once __DIR__.'/includes/class-yoda-direct-checkout.php';
 require_once __DIR__.'/includes/class-yoda-checkout-extras.php';
 require_once __DIR__.'/includes/class-yoda-webhooks.php';
 require_once __DIR__.'/includes/class-yoda-quick-pix.php';
+require_once __DIR__.'/includes/class-yoda-affiliates.php';
 
 // Hooks principais
 add_action('plugins_loaded', function () {
@@ -62,6 +63,19 @@ add_action('plugins_loaded', function () {
   (new Yoda_Checkout_Extras())->hooks();
   (new Yoda_Webhooks())->hooks();
   (new Yoda_Quick_Pix())->hooks();
+  (new Yoda_Affiliates())->hooks();
+});
+
+register_activation_hook(__FILE__, function(){
+  if (class_exists('Yoda_Affiliates')) {
+    Yoda_Affiliates::on_activate();
+  }
+});
+
+register_deactivation_hook(__FILE__, function(){
+  if (class_exists('Yoda_Affiliates')) {
+    Yoda_Affiliates::on_deactivate();
+  }
 });
 
 // Opcional: forçar IPv4 em hosts com IPv6 problemático

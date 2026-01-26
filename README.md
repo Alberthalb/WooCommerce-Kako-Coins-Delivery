@@ -40,6 +40,15 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - `[yoda_kako_card]`: mostra avatar/nickname do ID Kako (cookie `yoda_kako_id` pode ser preenchido via GET `?kakoid=`).
 - `[yoda_kako_logout]`: limpa cookie `yoda_kako_id`; atributos opcionais `redirect`, `label`, `confirm`, `icon`, `class`.
 - `[yoda_kako_portal]`: lista pedidos e status de entrega por KakoID (e email, exceto se `YODA_ID_ONLY_PORTAL` for true). Debug opcional `YODA_PORTAL_DEBUG` para admins.
+- `[yoda_affiliate_portal]`: portal exclusivo do revendedor (requer login e role `yoda_affiliate`).
+
+## Sistema de Revendedores (Afiliados)
+- Ative e configure em **Yoda → Revendedores** (taxa padrão, base de cálculo, dias de liberação, cookie, parâmetro do link).
+- Cada revendedor tem um **código** no perfil do usuário (`yoda_affiliate_code`) e (opcionalmente) uma **taxa personalizada** (`yoda_affiliate_rate`).
+- Link de indicação: `/?ref=SEU-CODIGO` (o parâmetro `ref` é configurável). O sistema grava cookie/sessão e atribui o pedido automaticamente.
+- O pedido guarda o revendedor em `_yoda_affiliate_id` e `_yoda_affiliate_code`.
+- A comissão é criada quando o pedido entra em `processing` ou `completed` e fica como **a liberar**; após o prazo configurado, o cron diário marca como **liberada**.
+- Se o pedido for `refunded/cancelled/failed`, a comissão é marcada como **estornada**.
 
 ## Logs (opcional)
 - Habilite com `define('YODA_LOGS', true);` em wp-config.php.
