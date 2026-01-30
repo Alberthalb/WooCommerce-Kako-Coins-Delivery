@@ -9,6 +9,23 @@
 
 if (!defined('ABSPATH')) exit;
 
+// Debug temporário do plugin (remova após diagnóstico)
+if (!defined('YODA_PLUGIN_DEBUG_LOG')) {
+  define('YODA_PLUGIN_DEBUG_LOG', plugin_dir_path(__FILE__) . 'yoda-debug.log');
+  @ini_set('log_errors', 1);
+  @ini_set('error_log', YODA_PLUGIN_DEBUG_LOG);
+  register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+      error_log('[FATAL] '.$e['message'].' in '.$e['file'].':'.$e['line'].' | URI: '.($_SERVER['REQUEST_URI'] ?? 'cli'));
+    }
+  });
+  set_exception_handler(function($ex){
+    error_log('[EXCEPTION] '.$ex->getMessage().' in '.$ex->getFile().':'.$ex->getLine());
+    throw $ex;
+  });
+}
+
 // Includes das classes
 require_once __DIR__.'/includes/class-yoda-admin.php';
 require_once __DIR__.'/includes/class-yoda-kako-client.php';

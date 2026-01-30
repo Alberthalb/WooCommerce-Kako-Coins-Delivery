@@ -24,6 +24,7 @@ class Yoda_Affiliates {
   const META_COMM_RELEASED_AT   = '_yoda_released_at';
   const META_COMM_REVERSED_AT   = '_yoda_reversed_at';
   const META_COMM_REASON        = '_yoda_reason';
+  const META_COMM_MODE          = '_yoda_mode'; // percent_currency|percent_coins|fixed
 
   const STATUS_HOLD      = 'a_liberar';
   const STATUS_RELEASED  = 'liberada';
@@ -124,7 +125,9 @@ class Yoda_Affiliates {
       'enabled' => 1,
       'param' => 'ref',
       'cookie_days' => 30,
-      'default_rate' => 10.0, // %
+      'commission_mode' => 'percent_currency', // percent_currency|percent_coins|fixed
+      'default_rate' => 10.0, // % (currency or coins)
+      'default_fixed' => 0.0, // valor fixo em R$
       'release_after_days' => 7,
       'base' => 'total', // total|subtotal
       'allow_self' => 0,
@@ -139,7 +142,9 @@ class Yoda_Affiliates {
     $o['enabled'] = (int)!!$o['enabled'];
     $o['param'] = preg_replace('/[^a-zA-Z0-9_\\-]/', '', (string)$o['param']) ?: 'ref';
     $o['cookie_days'] = max(0, (int)$o['cookie_days']);
+    $o['commission_mode'] = in_array($o['commission_mode'], ['percent_currency','percent_coins','fixed'], true) ? $o['commission_mode'] : 'percent_currency';
     $o['default_rate'] = (float)$o['default_rate'];
+    $o['default_fixed'] = max(0, (float)$o['default_fixed']);
     $o['release_after_days'] = max(0, (int)$o['release_after_days']);
     $o['base'] = in_array($o['base'], ['total','subtotal'], true) ? $o['base'] : 'total';
     $o['allow_self'] = (int)!!$o['allow_self'];
@@ -228,13 +233,17 @@ class Yoda_Affiliates {
         $out['enabled'] = !empty($opts['enabled']) ? 1 : 0;
         $out['param'] = preg_replace('/[^a-zA-Z0-9_\\-]/', '', (string)($opts['param'] ?? 'ref')) ?: 'ref';
         $out['cookie_days'] = max(0, (int)($opts['cookie_days'] ?? 30));
+        $out['commission_mode'] = in_array(($opts['commission_mode'] ?? ''), ['percent_currency','percent_coins','fixed'], true) ? $opts['commission_mode'] : 'percent_currency';
         $out['default_rate'] = (float)($opts['default_rate'] ?? 10);
+        $out['default_fixed'] = max(0, (float)($opts['default_fixed'] ?? 0));
         $out['release_after_days'] = max(0, (int)($opts['release_after_days'] ?? 7));
         $base = (string)($opts['base'] ?? 'total');
         $out['base'] = in_array($base, ['total','subtotal'], true) ? $base : 'total';
         $out['allow_self'] = !empty($opts['allow_self']) ? 1 : 0;
         $out['eligible_roles'] = trim((string)($opts['eligible_roles'] ?? 'customer'));
         $out['min_order_total'] = max(0, (int)($opts['min_order_total'] ?? 0));
+        $out['payout_min'] = max(0, (float)($opts['payout_min'] ?? 0));
+        $out['payout_admin_email'] = sanitize_email($opts['payout_admin_email'] ?? '');
         return $out;
       }
     ]);
@@ -266,8 +275,22 @@ class Yoda_Affiliates {
             <td><input type="number" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[cookie_days]" value="<?php echo esc_attr((int)$o['cookie_days']); ?>"></td>
           </tr>
           <tr>
-            <th scope="row"><label>Comissão padrão (%)</label></th>
-            <td><input type="number" step="0.01" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[default_rate]" value="<?php echo esc_attr((float)$o['default_rate']); ?>"></td>
+            <th scope="row"><label>Modelo de comissão</label></th>
+            <td>
+              <select name="<?php echo esc_attr(self::OPT_KEY); ?>[commission_mode]">
+                <option value="percent_currency" <?php selected($o['commission_mode'], 'percent_currency'); ?>>% sobre valor (R$)</option>
+                <option value="percent_coins" <?php selected($o['commission_mode'], 'percent_coins'); ?>>% sobre moedas entregues</option>
+                <option value="fixed" <?php selected($o['commission_mode'], 'fixed'); ?>>Valor fixo por pedido</option>
+              </select>
+              <p style="margin-top:6px;">
+                <label>Taxa padrão (%, se modo percentual)</label><br>
+                <input type="number" step="0.01" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[default_rate]" value="<?php echo esc_attr((float)$o['default_rate']); ?>">
+              </p>
+              <p style="margin-top:6px;">
+                <label>Valor fixo padrão (R$)</label><br>
+                <input type="number" step="0.01" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[default_fixed]" value="<?php echo esc_attr((float)$o['default_fixed']); ?>">
+              </p>
+            </td>
           </tr>
           <tr>
             <th scope="row"><label>Liberação após (dias)</label></th>
@@ -714,6 +737,17 @@ class Yoda_Affiliates {
     return $dq ?: null;
   }
 
+  private function build_order_date_range($from, $to){
+    $range = [];
+    if ($from) $range['after'] = $from.' 00:00:00';
+    if ($to)   $range['before'] = $to.' 23:59:59';
+    if ($range){
+      $range['inclusive'] = true;
+      return $range;
+    }
+    return '';
+  }
+
   public function handle_admin_release(){
     if (!current_user_can('manage_options')) wp_die('Sem permissão');
     $cid = isset($_GET['cid']) ? (int)$_GET['cid'] : 0;
@@ -995,14 +1029,26 @@ class Yoda_Affiliates {
       return 0;
     }
 
-    $rate = get_user_meta($aid, 'yoda_affiliate_rate', true);
-    $rate = ($rate === '' ? (float)$opts['default_rate'] : (float)$rate);
-    if ($rate <= 0) return 0;
+    $mode = $opts['commission_mode'];
+    $rate_meta = get_user_meta($aid, 'yoda_affiliate_rate', true);
+    $rate = ($rate_meta === '' ? ($mode === 'fixed' ? (float)$opts['default_fixed'] : (float)$opts['default_rate']) : (float)$rate_meta);
+    $base_amount = 0;
+    $amount = 0;
 
-    $base_amount = $this->get_commission_base_amount($order, $opts['base']);
-    if ($base_amount <= 0) return 0;
+    if ($mode === 'fixed'){
+      $amount = max(0, $rate);
+    } elseif ($mode === 'percent_coins'){
+      $base_amount = $this->get_order_coins_amount($order);
+      if ($base_amount > 0 && $rate > 0){
+        $amount = self::calc_commission($base_amount, $rate);
+      }
+    } else { // percent_currency
+      $base_amount = $this->get_commission_base_amount($order, $opts['base']);
+      if ($base_amount > 0 && $rate > 0){
+        $amount = self::calc_commission($base_amount, $rate);
+      }
+    }
 
-    $amount = self::calc_commission($base_amount, $rate);
     if ($amount <= 0) return 0;
 
     $available_at = time() + ((int)$opts['release_after_days'] * DAY_IN_SECONDS);
@@ -1020,6 +1066,7 @@ class Yoda_Affiliates {
     update_post_meta($commission_id, self::META_COMM_RATE, $rate);
     update_post_meta($commission_id, self::META_COMM_BASE_AMOUNT, $base_amount);
     update_post_meta($commission_id, self::META_COMM_AMOUNT, $amount);
+    update_post_meta($commission_id, self::META_COMM_MODE, $mode);
     update_post_meta($commission_id, self::META_COMM_STATUS, self::STATUS_HOLD);
     update_post_meta($commission_id, self::META_COMM_AVAILABLE_AT, $available_at);
 
@@ -1030,12 +1077,19 @@ class Yoda_Affiliates {
         'rate' => $rate,
         'base_amount' => $base_amount,
         'code' => $code,
+        'mode' => $mode,
       ]);
     }
-    $order->add_order_note(sprintf('Revendedor %s gerou comissão de %s (%.2f%%). Libera em %s.',
+    $note_mode = ($mode === 'fixed')
+      ? sprintf('valor fixo de %s', wc_price($amount))
+      : (($mode === 'percent_coins')
+        ? sprintf('%.2f%% sobre %s moedas', $rate, number_format_i18n($base_amount))
+        : sprintf('%.2f%% sobre %s', $rate, wc_price($base_amount)));
+    $order->add_order_note(sprintf(
+      'Revendedor %s gerou comissão (%s). Valor: %s. Libera em %s.',
       $code,
+      $note_mode,
       wc_price($amount),
-      $rate,
       date_i18n('Y-m-d', $available_at)
     ));
 
@@ -1058,6 +1112,18 @@ class Yoda_Affiliates {
     $rate_percent = (float)$rate_percent;
     if ($base_amount <= 0 || $rate_percent <= 0) return 0;
     return round(($base_amount * $rate_percent) / 100, wc_get_price_decimals());
+  }
+
+  private function get_order_coins_amount(WC_Order $order){
+    $delivered = 0;
+    if (class_exists('Yoda_Fulfillment')){
+      $delivered = (int)get_post_meta($order->get_id(), Yoda_Fulfillment::META_COINS_DELIVERED, true);
+    }
+    if ($delivered > 0) return $delivered;
+    if (class_exists('Yoda_Product_Meta') && method_exists('Yoda_Product_Meta', 'get_order_coins_amount')){
+      return (int)Yoda_Product_Meta::get_order_coins_amount($order);
+    }
+    return 0;
   }
 
   private function reverse_commission_for_order(WC_Order $order, $reason){
@@ -1210,6 +1276,7 @@ class Yoda_Affiliates {
       $amount = (float)get_post_meta($commission_id, self::META_COMM_AMOUNT, true);
       Yoda_Ledger::log('affiliate', $order_id, $aid, $amount, Yoda_Ledger::STATUS_PAID, [
         'commission_id' => $commission_id,
+        'mode' => (string)get_post_meta($commission_id, self::META_COMM_MODE, true),
       ]);
     }
     return true;

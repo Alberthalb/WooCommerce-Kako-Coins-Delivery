@@ -13,6 +13,7 @@
 - [ ] Em navegador anônimo, acessar a loja com `/?ref=CODIGO`.
 - [ ] Realizar uma compra (checkout normal).
 - [ ] Verificar no pedido (admin) metas `_yoda_affiliate_id/_code`.
+- [ ] Validar modelo de comissão escolhido em **Yoda → Revendedores**: `% sobre valor`, `% sobre moedas entregues` ou `valor fixo`; conferir taxa/valor padrão, base (total/subtotal) e dias de liberação.
 - [ ] Gatilho de crédito: status de entrega `delivered` cria comissão **A liberar** (via meta `_yoda_delivery_status`).
 - [ ] Antifraude: ao mudar `_yoda_delivery_status` para `needs_review/failed/cancelled`, comissão é estornada automaticamente.
 - [ ] Forçar liberação (meta `_yoda_available_at` ou botão “Liberar agora”) → status **Liberada** + nota no pedido.
@@ -28,6 +29,7 @@
 - [ ] Ativar em **Yoda → Cashback** (1,2%, mínimo 5.000).
 - [ ] Cliente compra produto com moedas.
 - [ ] Gatilho de crédito: entrega confirmada (`_yoda_delivery_status = delivered`) credita saldo `yoda_cashback_balance` e extrato **Creditado**.
+- [ ] Base de cálculo usa moedas efetivamente entregues (`_yoda_coins_delivered`), com arredondamento configurável (floor/round) em **Yoda → Cashback**.
 - [ ] Antifraude: ao mudar `_yoda_delivery_status` para `needs_review/failed/cancelled`, cashback do pedido é estornado e saldo ajustado.
 - [ ] Chargeback/refund/cancelled impedem resgate: movimentação vira `reversed` e saldo é debitado.
 - [ ] Portal **Minha Conta → Cashback** exibe saldo/extrato.

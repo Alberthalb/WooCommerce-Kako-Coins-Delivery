@@ -548,7 +548,7 @@ class Yoda_Raffles {
       $msg = $this->handle_join_post();
     }
 
-    $raffles = $this->get_open_raffles(20);
+    $raffles = $this->get_open_raffle_posts(20);
     $user_id = get_current_user_id();
 
     ob_start();
@@ -640,7 +640,7 @@ class Yoda_Raffles {
     return 'Inscrição registrada com sucesso.';
   }
 
-  private function get_open_raffles($limit){
+  private function get_open_raffle_posts($limit){
     $now = time();
     $ids = $this->get_open_raffles($limit, time());
     $posts = [];
