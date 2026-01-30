@@ -17,6 +17,7 @@
 - [ ] Antifraude: ao mudar `_yoda_delivery_status` para `needs_review/failed/cancelled`, comissão é estornada automaticamente.
 - [ ] Forçar liberação (meta `_yoda_available_at` ou botão “Liberar agora”) → status **Liberada** + nota no pedido.
 - [ ] Portal **Minha Conta → Revendedor** mostra link, KPIs e tabela.
+- [ ] Validações de ref: código inválido limpa cookie/sessão; autoindicação (usuário logado = afiliado) é bloqueada quando `allow_self` está desativado.
 
 ### 2. Cashback (moedas)
 - [ ] Ativar em **Yoda → Cashback** (1,2%, mínimo 5.000).

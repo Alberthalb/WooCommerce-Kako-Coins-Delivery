@@ -85,6 +85,11 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
   - **Admin**: permissões WordPress (`manage_options`), acesso total e visão dos portais para suporte.
   - **Revendedor (Afiliado)**: role custom `yoda_affiliate` (criada na ativação e garantida em runtime). Acesso ao portal do revendedor e comissões.
   - **Cliente**: role WooCommerce padrão `customer`, acesso a portais de cashback e sorteios.
+- Configs-chave no admin:
+  - Revendedores: comissão padrão, liberação após N dias, base, auto-compra, roles elegíveis, pedido mínimo.
+  - Cashback: % cashback, arredondamento, resgate mínimo, roles elegíveis, compra mínima (moedas).
+- Ledger: `includes/class-yoda-ledger.php` cria tabela `wp_yoda_ledger` para lançamentos de afiliado/cashback/sorteios.
+  - Tela de consulta rápida em **Yoda → Ledger** (`class-yoda-ledger-admin.php`) com filtros simples.
 
 ## Boas praticas de segredos
 - Nunca commitar chaves ou `.env`. Valores efetivos devem vir do ambiente ou wp-config.php.

@@ -126,6 +126,8 @@ class Yoda_Affiliates {
     $o['release_after_days'] = max(0, (int)$o['release_after_days']);
     $o['base'] = in_array($o['base'], ['total','subtotal'], true) ? $o['base'] : 'total';
     $o['allow_self'] = (int)!!$o['allow_self'];
+    $o['eligible_roles'] = trim((string)$o['eligible_roles']);
+    $o['min_order_total'] = max(0, (int)$o['min_order_total']);
     return $o;
   }
 
@@ -181,6 +183,8 @@ class Yoda_Affiliates {
         $base = (string)($opts['base'] ?? 'total');
         $out['base'] = in_array($base, ['total','subtotal'], true) ? $base : 'total';
         $out['allow_self'] = !empty($opts['allow_self']) ? 1 : 0;
+        $out['eligible_roles'] = trim((string)($opts['eligible_roles'] ?? 'customer'));
+        $out['min_order_total'] = max(0, (int)($opts['min_order_total'] ?? 0));
         return $out;
       }
     ]);
@@ -231,6 +235,20 @@ class Yoda_Affiliates {
           <tr>
             <th scope="row">Permitir auto-compra</th>
             <td><label><input type="checkbox" name="<?php echo esc_attr(self::OPT_KEY); ?>[allow_self]" value="1" <?php checked(1, $o['allow_self']); ?>> Permitir que o próprio revendedor gere comissão em compras dele</label></td>
+          </tr>
+          <tr>
+            <th scope="row"><label>Elegibilidade (roles)</label></th>
+            <td>
+              <input type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[eligible_roles]" value="<?php echo esc_attr($o['eligible_roles']); ?>" class="regular-text">
+              <p class="description">Lista separada por vírgula. Ex.: <code>customer,subscriber</code>. Vazio = qualquer role logada.</p>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><label>Pedido mínimo (total)</label></th>
+            <td>
+              <input type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPT_KEY); ?>[min_order_total]" value="<?php echo esc_attr((float)$o['min_order_total']); ?>">
+              <p class="description">Só gera comissão se o total do pedido for pelo menos este valor.</p>
+            </td>
           </tr>
         </table>
         <?php submit_button('Salvar'); ?>
@@ -467,10 +485,22 @@ class Yoda_Affiliates {
 
     $code = sanitize_text_field(wp_unslash($_GET[$param]));
     $code = trim($code);
-    if ($code === '' || !preg_match('/^[a-zA-Z0-9\\-_]{4,32}$/', $code)) return;
+    if ($code === '' || !preg_match('/^[a-zA-Z0-9\\-_]{4,32}$/', $code)){
+      $this->clear_tracking();
+      return;
+    }
 
     $affiliate_id = $this->find_affiliate_id_by_code($code);
-    if (!$affiliate_id) return;
+    if (!$affiliate_id){
+      $this->clear_tracking();
+      return;
+    }
+
+    // impede autoindicação se usuário logado for o próprio afiliado
+    if (is_user_logged_in() && get_current_user_id() === (int)$affiliate_id && !$opts['allow_self']){
+      $this->clear_tracking();
+      return;
+    }
 
     $payload = wp_json_encode([
       'id' => (int)$affiliate_id,
@@ -510,7 +540,14 @@ class Yoda_Affiliates {
 
     $affiliate_id = (int)($data['id'] ?? 0);
     $code = (string)($data['code'] ?? '');
-    if ($affiliate_id <= 0 || $code === '') return null;
+    if ($affiliate_id <= 0 || $code === '') {
+      $this->clear_tracking();
+      return null;
+    }
+    if (is_user_logged_in() && get_current_user_id() === $affiliate_id && !$opts['allow_self']){
+      $this->clear_tracking();
+      return null;
+    }
     return ['id'=>$affiliate_id,'code'=>$code];
   }
 
@@ -526,6 +563,13 @@ class Yoda_Affiliates {
     ]);
     if (empty($users[0])) return 0;
     return (int)$users[0];
+  }
+
+  private function clear_tracking(){
+    if (function_exists('WC') && WC() && WC()->session){
+      WC()->session->set(self::SESSION_KEY, null);
+    }
+    @setcookie(self::COOKIE_KEY, '', time() - 3600, COOKIEPATH ?: '/', COOKIE_DOMAIN ?: '', is_ssl(), true);
   }
 
   /* ========================================================================
@@ -620,6 +664,10 @@ class Yoda_Affiliates {
       return 0;
     }
 
+    if (!$this->is_order_eligible($order, $opts)){
+      return 0;
+    }
+
     $rate = get_user_meta($aid, 'yoda_affiliate_rate', true);
     $rate = ($rate === '' ? (float)$opts['default_rate'] : (float)$rate);
     if ($rate <= 0) return 0;
@@ -627,7 +675,7 @@ class Yoda_Affiliates {
     $base_amount = $this->get_commission_base_amount($order, $opts['base']);
     if ($base_amount <= 0) return 0;
 
-    $amount = round(($base_amount * $rate) / 100, wc_get_price_decimals());
+    $amount = self::calc_commission($base_amount, $rate);
     if ($amount <= 0) return 0;
 
     $available_at = time() + ((int)$opts['release_after_days'] * DAY_IN_SECONDS);
@@ -649,6 +697,14 @@ class Yoda_Affiliates {
     update_post_meta($commission_id, self::META_COMM_AVAILABLE_AT, $available_at);
 
     update_post_meta($order->get_id(), self::META_ORDER_COMMISSION_ID, $commission_id);
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('affiliate', $order->get_id(), $aid, $amount, Yoda_Ledger::STATUS_PENDING, [
+        'commission_id' => $commission_id,
+        'rate' => $rate,
+        'base_amount' => $base_amount,
+        'code' => $code,
+      ]);
+    }
     $order->add_order_note(sprintf('Revendedor %s gerou comissão de %s (%.2f%%). Libera em %s.',
       $code,
       wc_price($amount),
@@ -669,6 +725,14 @@ class Yoda_Affiliates {
     return (float)$order->get_total();
   }
 
+  /** Cálculo centralizado de comissão em moeda */
+  public static function calc_commission($base_amount, $rate_percent){
+    $base_amount = (float)$base_amount;
+    $rate_percent = (float)$rate_percent;
+    if ($base_amount <= 0 || $rate_percent <= 0) return 0;
+    return round(($base_amount * $rate_percent) / 100, wc_get_price_decimals());
+  }
+
   private function reverse_commission_for_order(WC_Order $order, $reason){
     $commission_id = (int)get_post_meta($order->get_id(), self::META_ORDER_COMMISSION_ID, true);
     if (!$commission_id) return 0;
@@ -682,6 +746,12 @@ class Yoda_Affiliates {
     update_post_meta($commission_id, self::META_COMM_REASON, (string)$reason);
 
     $order->add_order_note('Comissão do revendedor estornada. Motivo: '.$reason);
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('affiliate', $order->get_id(), (int)get_post_meta($commission_id, self::META_COMM_AFFILIATE_ID, true), -(float)get_post_meta($commission_id, self::META_COMM_AMOUNT, true), Yoda_Ledger::STATUS_REVERSED, [
+        'commission_id' => $commission_id,
+        'reason' => $reason,
+      ]);
+    }
     return $commission_id;
   }
 
@@ -729,6 +799,13 @@ class Yoda_Affiliates {
       if ($order){
         $order->add_order_note('Comissão do revendedor liberada automaticamente.');
       }
+    }
+    if (class_exists('Yoda_Ledger')){
+      $aid = (int)get_post_meta($commission_id, self::META_COMM_AFFILIATE_ID, true);
+      $amount = (float)get_post_meta($commission_id, self::META_COMM_AMOUNT, true);
+      Yoda_Ledger::log('affiliate', $order_id, $aid, $amount, Yoda_Ledger::STATUS_PAID, [
+        'commission_id' => $commission_id,
+      ]);
     }
     return true;
   }
@@ -956,5 +1033,17 @@ class Yoda_Affiliates {
     if (in_array('yoda_affiliate', (array)$user->roles, true)) return true;
     if (current_user_can('manage_options')) return true; // admins podem visualizar
     return false;
+  }
+
+  private function is_order_eligible(WC_Order $order, array $opts){
+    $roles_ok = true;
+    $allowed_roles = array_filter(array_map('trim', explode(',', (string)$opts['eligible_roles'])));
+    if ($allowed_roles){
+      $user = get_user_by('id', (int)$order->get_customer_id());
+      $roles = $user ? (array)$user->roles : [];
+      $roles_ok = (bool)array_intersect($roles, $allowed_roles);
+    }
+    $total_ok = ((float)$order->get_total()) >= (float)$opts['min_order_total'];
+    return $roles_ok && $total_ok;
   }
 }

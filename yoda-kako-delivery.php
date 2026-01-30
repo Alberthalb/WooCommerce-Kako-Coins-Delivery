@@ -28,6 +28,8 @@ require_once __DIR__.'/includes/class-yoda-webhooks.php';
 require_once __DIR__.'/includes/class-yoda-quick-pix.php';
 require_once __DIR__.'/includes/class-yoda-affiliates.php';
 require_once __DIR__.'/includes/class-yoda-cashback.php';
+require_once __DIR__.'/includes/class-yoda-ledger.php';
+require_once __DIR__.'/includes/class-yoda-ledger-admin.php';
 require_once __DIR__.'/includes/class-yoda-raffles.php';
 
 // Hooks principais
@@ -67,6 +69,8 @@ add_action('plugins_loaded', function () {
   (new Yoda_Quick_Pix())->hooks();
   (new Yoda_Affiliates())->hooks();
   (new Yoda_Cashback())->hooks();
+  Yoda_Ledger::hooks();
+  (new Yoda_Ledger_Admin())->hooks();
   (new Yoda_Raffles())->hooks();
 });
 
@@ -76,6 +80,9 @@ register_activation_hook(__FILE__, function(){
   }
   if (class_exists('Yoda_Cashback')) {
     Yoda_Cashback::on_activate();
+  }
+  if (class_exists('Yoda_Ledger')) {
+    Yoda_Ledger::maybe_create_table();
   }
   if (class_exists('Yoda_Raffles')) {
     Yoda_Raffles::on_activate();

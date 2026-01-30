@@ -211,6 +211,12 @@ class Yoda_Fulfillment {
       update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
       update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
       do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
+      if (class_exists('Yoda_Ledger')){
+        $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+        Yoda_Ledger::log('delivery', $order->get_id(), (int)$order->get_customer_id(), $coins, Yoda_Ledger::STATUS_AVAILABLE, [
+          'order_ref' => $orderRef,
+        ]);
+      }
       $order->add_order_note("Yoda Kako: entregue ✅ | amount={$amount} | orderId={$orderRef}");
 
       // envia e-mail ao cliente (AQUI VAI O TRECHO QUE VOCÊ CITOU)
@@ -230,6 +236,12 @@ class Yoda_Fulfillment {
         update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
         update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
         do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
+        if (class_exists('Yoda_Ledger')){
+          $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+          Yoda_Ledger::log('delivery', $order->get_id(), (int)$order->get_customer_id(), $coins, Yoda_Ledger::STATUS_AVAILABLE, [
+            'order_ref' => $orderRef,
+          ]);
+        }
         $order->add_order_note("Yoda Kako: confirmada via transqry (dup) ✅ | orderId={$orderRef}");
 
         // também envia e-mail quando confirmado via transqry

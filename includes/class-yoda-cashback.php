@@ -69,6 +69,8 @@ class Yoda_Cashback {
       'rounding' => 'floor', // floor|round
       'award_on' => 'delivered', // delivered
       'allow_guest' => 0,
+      'eligible_roles' => 'customer',
+      'min_order_coins' => 0,
     ];
     $o = get_option(self::OPT_KEY, []);
     if (!is_array($o)) $o = [];
@@ -79,7 +81,21 @@ class Yoda_Cashback {
     $o['rounding'] = in_array($o['rounding'], ['floor','round'], true) ? $o['rounding'] : 'floor';
     $o['award_on'] = 'delivered';
     $o['allow_guest'] = (int)!!$o['allow_guest'];
+    $o['eligible_roles'] = trim((string)$o['eligible_roles']);
+    $o['min_order_coins'] = max(0, (int)$o['min_order_coins']);
     return $o;
+  }
+
+  /** Cálculo centralizado de cashback em moedas */
+  public static function calc_amount($base_coins, $rate_percent, $rounding = 'floor'){
+    $base_coins = (float)$base_coins;
+    $rate_percent = (float)$rate_percent;
+    if ($base_coins <= 0 || $rate_percent <= 0) return 0;
+    $raw = ($base_coins * $rate_percent) / 100.0;
+    if ($rounding === 'round'){
+      return (int) round($raw);
+    }
+    return (int) floor($raw);
   }
 
   /* ========================================================================
@@ -131,6 +147,8 @@ class Yoda_Cashback {
         $out['min_redeem'] = max(0, (int)($opts['min_redeem'] ?? 5000));
         $rounding = (string)($opts['rounding'] ?? 'floor');
         $out['rounding'] = in_array($rounding, ['floor','round'], true) ? $rounding : 'floor';
+        $out['eligible_roles'] = trim((string)($opts['eligible_roles'] ?? 'customer'));
+        $out['min_order_coins'] = max(0, (int)($opts['min_order_coins'] ?? 0));
         return $out;
       }
     ]);
@@ -167,6 +185,20 @@ class Yoda_Cashback {
                 <option value="floor" <?php selected($o['rounding'], 'floor'); ?>>Truncar (floor)</option>
                 <option value="round" <?php selected($o['rounding'], 'round'); ?>>Arredondar (round)</option>
               </select>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><label>Elegibilidade (roles)</label></th>
+            <td>
+              <input type="text" name="<?php echo esc_attr(self::OPT_KEY); ?>[eligible_roles]" value="<?php echo esc_attr($o['eligible_roles']); ?>" class="regular-text">
+              <p class="description">Lista separada por vírgula. Ex.: <code>customer,subscriber</code>. Vazio = qualquer role logada.</p>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><label>Compra mínima (moedas)</label></th>
+            <td>
+              <input type="number" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[min_order_coins]" value="<?php echo esc_attr((int)$o['min_order_coins']); ?>">
+              <p class="description">Só credita cashback se o pedido entregar pelo menos este número de moedas.</p>
             </td>
           </tr>
         </table>
@@ -348,6 +380,10 @@ class Yoda_Cashback {
       return; // cashback só para clientes logados/registrados
     }
 
+    if (!$this->is_order_eligible($order, $opts, $coins_amount)){
+      return;
+    }
+
     $base = (int)$coins_amount;
     if ($base <= 0) return;
 
@@ -358,8 +394,7 @@ class Yoda_Cashback {
     $rate = (float)$opts['rate'];
     if ($rate <= 0) return;
 
-    $raw = ($base * $rate) / 100.0;
-    $amount = ($opts['rounding'] === 'round') ? (int)round($raw) : (int)floor($raw);
+    $amount = self::calc_amount($base, $rate, $opts['rounding']);
     if ($amount <= 0) return;
 
     $kakoId = (string)get_post_meta($order->get_id(), Yoda_Fulfillment::META_KAKO_ID, true);
@@ -382,6 +417,13 @@ class Yoda_Cashback {
 
     $this->add_balance($user_id, $amount);
     $order->add_order_note(sprintf('Cashback: %d moedas (%.2f%%) creditadas no saldo do cliente.', $amount, $rate));
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('cashback', $order->get_id(), $user_id, $amount, Yoda_Ledger::STATUS_AVAILABLE, [
+        'txn_id' => $txn_id,
+        'rate' => $rate,
+        'base_coins' => $base,
+      ]);
+    }
   }
 
   public function maybe_award_from_delivery_meta($meta_id, $object_id, $meta_key, $meta_value){
@@ -437,6 +479,12 @@ class Yoda_Cashback {
       $this->add_balance($user_id, -$amount);
     }
     $order->add_order_note('Cashback: estornado por '.$reason.'.');
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('cashback', $order->get_id(), $user_id, -$amount, Yoda_Ledger::STATUS_REVERSED, [
+        'txn_id' => $earn_txn_id,
+        'reason' => $reason,
+      ]);
+    }
   }
 
   /* ========================================================================
@@ -596,6 +644,12 @@ class Yoda_Cashback {
       update_post_meta($txn_id, self::META_TXN_STATUS, 'redeemed');
       update_post_meta($txn_id, self::META_TXN_DONE_AT, time());
       update_user_meta($user_id, self::META_LAST_KAKO_ID, $kakoId);
+      if (class_exists('Yoda_Ledger')){
+        Yoda_Ledger::log('cashback', 0, $user_id, -$amount, Yoda_Ledger::STATUS_PAID, [
+          'txn_id' => $txn_id,
+          'kakoid' => $kakoId,
+        ]);
+      }
       return 'Resgate realizado com sucesso.';
     }
 
@@ -604,6 +658,12 @@ class Yoda_Cashback {
     update_post_meta($txn_id, self::META_TXN_STATUS, 'failed');
     update_post_meta($txn_id, self::META_TXN_REASON, (string)$res['msg']);
     update_post_meta($txn_id, self::META_TXN_DONE_AT, time());
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('cashback', 0, $user_id, 0, Yoda_Ledger::STATUS_BLOCKED, [
+        'txn_id' => $txn_id,
+        'reason' => $res['msg'],
+      ]);
+    }
     return 'Falha ao resgatar: '.$res['msg'];
   }
 
@@ -759,5 +819,17 @@ class Yoda_Cashback {
       ];
     }
     return $out;
+  }
+
+  private function is_order_eligible(WC_Order $order, array $opts, $coins_amount){
+    $roles_ok = true;
+    $allowed_roles = array_filter(array_map('trim', explode(',', (string)$opts['eligible_roles'])));
+    if ($allowed_roles){
+      $user = get_user_by('id', (int)$order->get_customer_id());
+      $roles = $user ? (array)$user->roles : [];
+      $roles_ok = (bool)array_intersect($roles, $allowed_roles);
+    }
+    $coins_min_ok = ((int)$coins_amount) >= (int)$opts['min_order_coins'];
+    return $roles_ok && $coins_min_ok;
   }
 }

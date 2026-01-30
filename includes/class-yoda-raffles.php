@@ -183,6 +183,11 @@ class Yoda_Raffles {
     $winner_entry = (int)$entries[array_rand($entries)];
     update_post_meta($raffle_id, self::META_RAFFLE_WINNER_ID, $winner_entry);
     update_post_meta($raffle_id, self::META_RAFFLE_STATUS, 'drawn');
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('raffle_draw', $raffle_id, 0, 0, Yoda_Ledger::STATUS_PAID, [
+        'entry_id' => $winner_entry,
+      ]);
+    }
     return $winner_entry;
   }
 
@@ -387,6 +392,11 @@ class Yoda_Raffles {
     update_post_meta($entry_id, self::META_ENTRY_RAFFLE_ID, (int)$raffle_id);
     update_post_meta($entry_id, self::META_ENTRY_USER_ID, (int)$user_id);
     update_post_meta($entry_id, self::META_ENTRY_CREATED_AT, time());
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('raffle_entry', $raffle_id, $user_id, 0, Yoda_Ledger::STATUS_PENDING, [
+        'entry_id' => $entry_id,
+      ]);
+    }
     return (int)$entry_id;
   }
 

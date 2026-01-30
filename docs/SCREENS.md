@@ -6,6 +6,7 @@
   - Ativar/Desativar.
   - Parâmetro de link (`ref`), duração do cookie (dias).
   - Comissão padrão (%), liberação após N dias, base de cálculo (total/subtotal), permitir auto-compra.
+  - Elegibilidade: roles permitidas e pedido mínimo (total).
 - **Revendedores (Relatórios)**
   - Lista de comissões: pedido, afiliado, valor, status (a liberar/liberada/estornada), data de liberação.
   - Filtros: período, status, afiliado.
@@ -13,10 +14,14 @@
 - **Cashback (Config)**
   - Ativar/Desativar.
   - Percentual (%), arredondamento, resgate mínimo (moedas).
+  - Elegibilidade: roles permitidas e compra mínima (moedas) para crédito.
 - **Cashback (Relatórios)**
   - Extrato de cashback: usuário, pedido, valor, status (creditado/estornado/resgatado/pendente), datas.
   - Filtros: período, status, usuário.
   - Ações: estornar movimentação, marcar como resgatado (manual).
+- **Ledger (Admin)**
+  - Consulta rápida de lançamentos (`wp_yoda_ledger`): filtros por tipo/status/usuário, última página (50 registros).
+  - Status padronizados: `pending`, `available`, `paid`, `reversed`, `blocked`.
 - **Sorteios (Admin)**
   - Criar/editar sorteio: título/descrição, status (draft/open/closed/drawn), início/fim, máx. inscrições por usuário.
   - Botão “Sortear vencedor” e exibir entry vencedora.
