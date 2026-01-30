@@ -1,4 +1,4 @@
-## Plano de validação – Afiliados, Cashback (moedas) e Sorteios
+﻿## Plano de validação – Afiliados, Cashback (moedas) e Sorteios
 
 > Status geral: **pendente de execução em ambiente WordPress real**. Checklist abaixo para ser marcado durante os testes.
 
@@ -18,20 +18,33 @@
 - [ ] Forçar liberação (meta `_yoda_available_at` ou botão “Liberar agora”) → status **Liberada** + nota no pedido.
 - [ ] Portal **Minha Conta → Revendedor** mostra link, KPIs e tabela.
 - [ ] Validações de ref: código inválido limpa cookie/sessão; autoindicação (usuário logado = afiliado) é bloqueada quando `allow_self` está desativado.
+- [ ] Endpoint/menu “Revendedor” aparece no menu da Minha Conta para role `yoda_affiliate` e admin (teste visual).
+- [ ] Filtro de status na lista de comissões (portal) funciona: A liberar / Liberada / Estornada.
+- [ ] Saque: portal mostra saldo disponível/pending/pago, aceita solicitação até o limite e exibe histórico com status (pendente/pago/rejeitado).
+- [ ] E-mails de saque: afiliado recebe e-mail ao solicitar (pendente), quando pago e quando rejeitado; admin recebe notificação (config ou admin_email).
+- [ ] Filtros por data no portal do afiliado (yfrom/yto) afetam cards, comissões e saques exibidos.
 
 ### 2. Cashback (moedas)
 - [ ] Ativar em **Yoda → Cashback** (1,2%, mínimo 5.000).
 - [ ] Cliente compra produto com moedas.
 - [ ] Gatilho de crédito: entrega confirmada (`_yoda_delivery_status = delivered`) credita saldo `yoda_cashback_balance` e extrato **Creditado**.
 - [ ] Antifraude: ao mudar `_yoda_delivery_status` para `needs_review/failed/cancelled`, cashback do pedido é estornado e saldo ajustado.
+- [ ] Chargeback/refund/cancelled impedem resgate: movimentação vira `reversed` e saldo é debitado.
 - [ ] Portal **Minha Conta → Cashback** exibe saldo/extrato.
-- [ ] Resgate ≥ 5.000: transout ok, movimentação `pending/redeemed`.
+- [ ] Resgate ≥ 5.000 (mínimo absoluto): bloqueia valores menores; transout ok, movimentação `pending/redeemed`.
+- [ ] Admin consegue aprovar/recusar/forçar resgates pendentes e registrar motivo; saldo ajusta corretamente.
+- [ ] Alertas no portal: avisar novos créditos e status dos resgates (pendente/concluído/recusado/falha).
+- [ ] E-mails enviados para cliente ao creditar cashback, registrar pedido de resgate e ao pagar o resgate.
 - [ ] Pedido `refunded/cancelled/failed` estorna cashback e ajusta saldo.
 
 ### 3. Sorteios
 - [ ] Criar sorteio (status `open`, início/fim opcional, limite por usuário).
 - [ ] Cliente logado inscreve em **Minha Conta → Sorteios** / `[yoda_raffles]`; entry criada e limite respeitado.
-- [ ] Admin clica **Sortear vencedor**; meta de vencedor definida, status `drawn`.
+- [ ] Admin clica **Sortear vencedor** ou **Encerrar e sortear**; meta de vencedor definida, status `drawn` e campanha encerrada.
+- [ ] Entrega elegível gera tickets automáticos conforme regra (pedido/valor em moedas), registrados no Ledger como `raffle_ticket`.
+- [ ] Garantir bloqueio: nenhum ticket duplicado por pedido e limite por usuário respeitado (verificar entradas e ledger).
+- [ ] Auditoria de sorteio: ao sortear, gravar admin, horário, entry vencedora e travar a campanha (status `drawn`).
+- [ ] Pagar prêmio: transout para KakoID do vencedor, gravar recibo/orderRef e log `raffle_prize` no Ledger.
 
 ### 4. Relatórios
 - [ ] **Yoda → Comissões (Revendedores)**: filtros por status/afiliado/período; ações liberar/estornar funcionam.
@@ -44,3 +57,6 @@
 - Papéis garantidos:
   - `yoda_affiliate` (revendedor) criado na ativação e verificado em runtime.
   - Admin (`manage_options`) vê tudo; Cliente é a role padrão `customer`.
+## Notas adicionais
+- Menu **Carteira/Cashback** disponível em Minha Conta para clientes logados; carrega o portal com saldo, resgate e extrato.
+- Cards mostram saldos por status: pendente, disponível, resgatado e estornado (moedas).

@@ -10,10 +10,19 @@ class Yoda_Raffles {
   const META_RAFFLE_END_AT    = '_yoda_end_at'; // ts
   const META_RAFFLE_MAX_USER  = '_yoda_max_entries_per_user'; // int
   const META_RAFFLE_WINNER_ID = '_yoda_winner_entry_id'; // entry post id
+  const META_RAFFLE_LAST_ADMIN = '_yoda_last_admin';
+  const META_RAFFLE_AUDIT     = '_yoda_audit';
+  const META_RAFFLE_DRAWN_AT  = '_yoda_drawn_at';
+  const META_RAFFLE_TICKET_MODE = '_yoda_ticket_mode'; // per_order|per_coins
+  const META_RAFFLE_TICKET_COINS_PER = '_yoda_ticket_coins_per'; // int
+  const META_RAFFLE_PRIZE_COINS = '_yoda_prize_coins'; // int
+  const META_RAFFLE_PRIZE_STATUS = '_yoda_prize_status'; // paid|failed
+  const META_RAFFLE_PRIZE_RECEIPT = '_yoda_prize_receipt';
 
   const META_ENTRY_RAFFLE_ID  = '_yoda_raffle_id';
   const META_ENTRY_USER_ID    = '_yoda_user_id';
   const META_ENTRY_CREATED_AT = '_yoda_created_at';
+  const META_ENTRY_ORDER_ID   = '_yoda_order_id';
 
   const NONCE_JOIN = 'yoda_raffle_join';
 
@@ -31,7 +40,11 @@ class Yoda_Raffles {
       add_action('add_meta_boxes', [$this,'add_meta_boxes']);
       add_action('save_post_'.self::CPT_RAFFLE, [$this,'save_raffle_meta'], 10, 2);
       add_action('admin_post_yoda_raffle_draw', [$this,'handle_draw']);
+      add_action('admin_post_yoda_raffle_close_draw', [$this,'handle_close_and_draw']);
     }
+
+    // Tickets automáticos baseados em entregas
+    add_action('yoda_kako_delivery_delivered', [$this,'maybe_auto_ticket'], 20, 3);
   }
 
   public static function on_activate(){
@@ -93,6 +106,10 @@ class Yoda_Raffles {
     $max = (int)get_post_meta($post->ID, self::META_RAFFLE_MAX_USER, true);
     if ($max <= 0) $max = 1;
     $winner = (int)get_post_meta($post->ID, self::META_RAFFLE_WINNER_ID, true);
+    $ticket_mode = (string)get_post_meta($post->ID, self::META_RAFFLE_TICKET_MODE, true);
+    if (!$ticket_mode) $ticket_mode = 'per_order';
+    $ticket_coins = (int)get_post_meta($post->ID, self::META_RAFFLE_TICKET_COINS_PER, true);
+    $prize_coins = (int)get_post_meta($post->ID, self::META_RAFFLE_PRIZE_COINS, true);
     $entries = $this->count_entries($post->ID);
     ?>
     <?php echo wp_nonce_field('yoda_raffle_meta', '_yoda_raffle_meta', true, false); ?>
@@ -122,20 +139,43 @@ class Yoda_Raffles {
       <input type="number" min="1" name="yoda_raffle_max" value="<?php echo esc_attr($max); ?>" style="width:100%;">
     </p>
 
+    <p>
+      <label><strong>Regra de tickets</strong></label><br>
+      <select name="yoda_raffle_ticket_mode">
+        <option value="per_order" <?php selected($ticket_mode, 'per_order'); ?>>1 ticket por compra entregue</option>
+        <option value="per_coins" <?php selected($ticket_mode, 'per_coins'); ?>>1 ticket a cada X moedas entregues</option>
+      </select>
+    </p>
+
+    <p>
+      <label><strong>Moedas por ticket</strong> (se usar regra por moedas)</label><br>
+      <input type="number" min="1" name="yoda_raffle_ticket_coins" value="<?php echo esc_attr($ticket_coins > 0 ? $ticket_coins : 1000); ?>" style="width:100%;">
+    </p>
+
+    <p>
+      <label><strong>Prêmio (moedas)</strong></label><br>
+      <input type="number" min="0" name="yoda_raffle_prize_coins" value="<?php echo esc_attr($prize_coins); ?>" style="width:100%;">
+    </p>
+
     <p style="opacity:.8;margin:8px 0 0;">Inscrições: <strong><?php echo esc_html((int)$entries); ?></strong></p>
     <?php if ($winner): ?>
       <p style="opacity:.8;margin:6px 0 0;">Vencedor (entry): <strong>#<?php echo esc_html((int)$winner); ?></strong></p>
     <?php endif; ?>
 
-    <hr>
+<hr>
     <?php if ($entries > 0): ?>
       <?php
         $draw_url = wp_nonce_url(
           admin_url('admin-post.php?action=yoda_raffle_draw&raffle_id='.$post->ID),
           'yoda_raffle_draw_'.$post->ID
         );
+        $close_draw_url = wp_nonce_url(
+          admin_url('admin-post.php?action=yoda_raffle_close_draw&raffle_id='.$post->ID),
+          'yoda_raffle_close_draw_'.$post->ID
+        );
       ?>
       <p><a class="button button-secondary" href="<?php echo esc_url($draw_url); ?>">Sortear vencedor</a></p>
+      <p><a class="button button-primary" href="<?php echo esc_url($close_draw_url); ?>">Encerrar e sortear</a></p>
       <p class="description">Seleciona 1 inscrição aleatoriamente e marca como vencedor.</p>
     <?php else: ?>
       <p class="description">Sem inscrições ainda.</p>
@@ -163,6 +203,18 @@ class Yoda_Raffles {
     $max = isset($_POST['yoda_raffle_max']) ? (int)$_POST['yoda_raffle_max'] : 1;
     $max = max(1, $max);
     update_post_meta($post_id, self::META_RAFFLE_MAX_USER, $max);
+
+    $ticket_mode = sanitize_text_field(wp_unslash($_POST['yoda_raffle_ticket_mode'] ?? 'per_order'));
+    if (!in_array($ticket_mode, ['per_order','per_coins'], true)) $ticket_mode = 'per_order';
+    update_post_meta($post_id, self::META_RAFFLE_TICKET_MODE, $ticket_mode);
+
+    $ticket_coins = isset($_POST['yoda_raffle_ticket_coins']) ? (int)$_POST['yoda_raffle_ticket_coins'] : 1000;
+    $ticket_coins = max(1, $ticket_coins);
+    update_post_meta($post_id, self::META_RAFFLE_TICKET_COINS_PER, $ticket_coins);
+
+    $prize_coins = isset($_POST['yoda_raffle_prize_coins']) ? (int)$_POST['yoda_raffle_prize_coins'] : 0;
+    $prize_coins = max(0, $prize_coins);
+    update_post_meta($post_id, self::META_RAFFLE_PRIZE_COINS, $prize_coins);
   }
 
   public function handle_draw(){
@@ -170,11 +222,223 @@ class Yoda_Raffles {
     $raffle_id = isset($_GET['raffle_id']) ? (int)$_GET['raffle_id'] : 0;
     if ($raffle_id <= 0 || get_post_type($raffle_id) !== self::CPT_RAFFLE) wp_die('Sorteio inválido');
     check_admin_referer('yoda_raffle_draw_'.$raffle_id);
+    if (get_transient('yoda_raffle_draw_lock_'.$raffle_id)) wp_die('Sorteio já está sendo processado.');
+    set_transient('yoda_raffle_draw_lock_'.$raffle_id, 1, 30);
 
     $winner = $this->draw_winner($raffle_id);
     $msg = $winner ? 'Vencedor definido: entry #'.$winner : 'Não foi possível sortear (sem inscrições).';
+    delete_transient('yoda_raffle_draw_lock_'.$raffle_id);
     wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('post.php?post='.$raffle_id.'&action=edit')));
     exit;
+  }
+
+  public function handle_close_and_draw(){
+    if (!current_user_can('edit_posts')) wp_die('Sem permissão');
+    $raffle_id = isset($_GET['raffle_id']) ? (int)$_GET['raffle_id'] : 0;
+    if ($raffle_id <= 0 || get_post_type($raffle_id) !== self::CPT_RAFFLE) wp_die('Sorteio inválido');
+    check_admin_referer('yoda_raffle_close_draw_'.$raffle_id);
+    if (get_transient('yoda_raffle_draw_lock_'.$raffle_id)) wp_die('Sorteio já está sendo processado.');
+    set_transient('yoda_raffle_draw_lock_'.$raffle_id, 1, 30);
+
+    update_post_meta($raffle_id, self::META_RAFFLE_STATUS, 'closed');
+    $winner = $this->draw_winner($raffle_id);
+    $msg = $winner ? 'Sorteio encerrado e vencedor: entry #'.$winner : 'Não foi possível sortear (sem inscrições).';
+    delete_transient('yoda_raffle_draw_lock_'.$raffle_id);
+    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('post.php?post='.$raffle_id.'&action=edit')));
+    exit;
+  }
+
+  /* ========================================================================
+   * Tickets automáticos por entrega (MVP)
+   * ======================================================================== */
+  public function maybe_auto_ticket($order, $coins_amount, $order_ref){
+    if (!($order instanceof WC_Order)) return;
+    $user_id = (int)$order->get_customer_id();
+    if ($user_id <= 0) return; // apenas clientes registrados
+
+    $now = time();
+    $raffles = $this->get_open_raffles(20, $now);
+    if (empty($raffles)) return;
+
+    // moedas efetivamente entregues
+    $delivered = (int)get_post_meta($order->get_id(), Yoda_Fulfillment::META_COINS_DELIVERED, true);
+    $delivered = $delivered > 0 ? $delivered : (int)$coins_amount;
+
+    foreach ($raffles as $raffle_id){
+      $lock_key = $this->ticket_lock_key($raffle_id, $order->get_id());
+      if (get_transient($lock_key)) continue;
+
+      $max_user = (int)get_post_meta($raffle_id, self::META_RAFFLE_MAX_USER, true);
+      $max_user = $max_user > 0 ? $max_user : 1;
+      $current_user_entries = $this->count_entries_for_user($raffle_id, $user_id);
+      $remaining = $max_user - $current_user_entries;
+      if ($remaining <= 0) continue;
+
+      $mode = (string)get_post_meta($raffle_id, self::META_RAFFLE_TICKET_MODE, true);
+      if (!in_array($mode, ['per_order','per_coins'], true)) $mode = 'per_order';
+      $coins_per = (int)get_post_meta($raffle_id, self::META_RAFFLE_TICKET_COINS_PER, true);
+      if ($coins_per <= 0) $coins_per = 1000;
+
+      $tickets = ($mode === 'per_order') ? 1 : (int)floor($delivered / $coins_per);
+      if ($tickets <= 0) continue;
+      if ($tickets > $remaining) $tickets = $remaining;
+
+      // não duplicar para o mesmo pedido/raffle
+      if ($this->entry_exists_for_order($raffle_id, $order->get_id())) continue;
+
+      set_transient($lock_key, 1, 60);
+      $this->create_entries($raffle_id, $user_id, $order->get_id(), $tickets);
+      delete_transient($lock_key);
+    }
+  }
+
+  private function get_open_raffles($limit = 20, $now_ts = null){
+    $limit = max(1, (int)$limit);
+    $now_ts = $now_ts ?: time();
+    $cache_key = 'yoda_open_raffles_'.$limit.'_'.date('YmdHi', $now_ts); // cache por minuto
+    $cached = get_transient($cache_key);
+    if ($cached !== false) return (array)$cached;
+
+    $q = new WP_Query([
+      'post_type' => self::CPT_RAFFLE,
+      'post_status' => 'publish',
+      'posts_per_page' => $limit,
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_RAFFLE_STATUS,
+          'value' => 'open',
+          'compare' => '=',
+        ],
+      ],
+    ]);
+    $out = [];
+    foreach ((array)$q->posts as $rid){
+      $start = (int)get_post_meta($rid, self::META_RAFFLE_START_AT, true);
+      $end   = (int)get_post_meta($rid, self::META_RAFFLE_END_AT, true);
+      if ($start && $now_ts < $start) continue;
+      if ($end && $now_ts > $end) continue;
+      $out[] = (int)$rid;
+    }
+    set_transient($cache_key, $out, MINUTE_IN_SECONDS);
+    return $out;
+  }
+
+  private function entry_exists_for_order($raffle_id, $order_id){
+    $q = new WP_Query([
+      'post_type' => self::CPT_ENTRY,
+      'post_status' => 'publish',
+      'posts_per_page' => 1,
+      'fields' => 'ids',
+      'meta_query' => [
+        ['key'=>self::META_ENTRY_RAFFLE_ID,'value'=>(string)(int)$raffle_id,'compare'=>'='],
+        ['key'=>self::META_ENTRY_ORDER_ID,'value'=>(string)(int)$order_id,'compare'=>'='],
+      ],
+    ]);
+    return !empty($q->posts);
+  }
+
+  private function ticket_lock_key($raffle_id, $order_id){
+    return 'yoda_ticket_lock_'.$raffle_id.'_'.$order_id;
+  }
+
+  private function create_entries($raffle_id, $user_id, $order_id, $count){
+    for ($i=0; $i < $count; $i++){
+      $entry_id = wp_insert_post([
+        'post_type' => self::CPT_ENTRY,
+        'post_status' => 'publish',
+        'post_title' => sprintf('Entry user #%d raffle #%d', $user_id, $raffle_id),
+      ], true);
+      if (is_wp_error($entry_id)) continue;
+      update_post_meta($entry_id, self::META_ENTRY_RAFFLE_ID, (int)$raffle_id);
+      update_post_meta($entry_id, self::META_ENTRY_USER_ID, (int)$user_id);
+      update_post_meta($entry_id, self::META_ENTRY_CREATED_AT, time());
+      update_post_meta($entry_id, self::META_ENTRY_ORDER_ID, (int)$order_id);
+      if (class_exists('Yoda_Ledger')){
+        Yoda_Ledger::log('raffle_ticket', $raffle_id, (int)$user_id, 1, Yoda_Ledger::STATUS_AVAILABLE, [
+          'entry_id' => (int)$entry_id,
+          'order_id' => (int)$order_id,
+        ]);
+      }
+    }
+  }
+
+  /* ========================================================================
+   * Pagamento do prêmio
+   * ======================================================================== */
+  private function maybe_pay_prize($raffle_id, $winner_entry){
+    $prize = (int)get_post_meta($raffle_id, self::META_RAFFLE_PRIZE_COINS, true);
+    if ($prize <= 0) return;
+    if (get_post_meta($raffle_id, self::META_RAFFLE_PRIZE_STATUS, true) === 'paid') return;
+
+    $winner_user = (int)get_post_meta($winner_entry, self::META_ENTRY_USER_ID, true);
+    if ($winner_user <= 0) return;
+
+    $kakoId = (string)get_user_meta($winner_user, Yoda_Cashback::META_LAST_KAKO_ID, true);
+    if (!$kakoId){
+      $order_id = (int)get_post_meta($winner_entry, self::META_ENTRY_ORDER_ID, true);
+      if ($order_id){
+        $kakoId = (string)get_post_meta($order_id, Yoda_Fulfillment::META_KAKO_ID, true);
+      }
+    }
+    if (!$kakoId) {
+      add_post_meta($raffle_id, self::META_RAFFLE_AUDIT, sprintf('%s | prize_failed | admin #%d | falta KakoID', date('c'), (int)get_current_user_id()));
+      return;
+    }
+
+    $order_ref = 'raffle-'.$raffle_id.'-'.$winner_entry;
+    $res = $this->send_kako_prize($kakoId, $prize, $order_ref);
+    if ($res['ok']){
+      update_post_meta($raffle_id, self::META_RAFFLE_PRIZE_STATUS, 'paid');
+      update_post_meta($raffle_id, self::META_RAFFLE_PRIZE_RECEIPT, $order_ref);
+      add_post_meta($raffle_id, self::META_RAFFLE_AUDIT, sprintf('%s | prize_paid | admin #%d | entry #%d | %d moedas | kako %s', date('c'), (int)get_current_user_id(), $winner_entry, $prize, $kakoId));
+      if (class_exists('Yoda_Ledger')){
+        Yoda_Ledger::log('raffle_prize', $raffle_id, $winner_user, -$prize, Yoda_Ledger::STATUS_PAID, [
+          'entry_id' => $winner_entry,
+          'kakoid' => $kakoId,
+          'receipt' => $order_ref,
+          'by' => get_current_user_id(),
+        ]);
+      }
+    } else {
+      add_post_meta($raffle_id, self::META_RAFFLE_AUDIT, sprintf('%s | prize_failed | admin #%d | entry #%d | %s', date('c'), (int)get_current_user_id(), $winner_entry, $res['msg']));
+    }
+  }
+
+  private function send_kako_prize($kakoId, $amount, $orderId){
+    if (!class_exists('Yoda_Kako_Client')) return ['ok'=>false,'msg'=>'Cliente Kako indisponível.'];
+    list($appId,$appKey,$base) = $this->get_effective_creds();
+    if (!$appId || !$appKey) return ['ok'=>false,'msg'=>'Credenciais Kako não configuradas.'];
+
+    $client = new Yoda_Kako_Client($base, $appId, $appKey);
+    $ui = $client->userinfo($kakoId);
+    if (is_wp_error($ui)) return ['ok'=>false,'msg'=>'userinfo HTTP: '.$ui->get_error_message()];
+    $openId = $ui['json']['data']['openId'] ?? '';
+    if (!$openId) return ['ok'=>false,'msg'=>'Usuário sem openId.'];
+
+    $to = $client->transout($openId, (int)$amount, (string)$orderId);
+    if (is_wp_error($to)) return ['ok'=>false,'msg'=>'transout HTTP: '.$to->get_error_message()];
+    $code = $to['json']['code'] ?? -1;
+    $status = (int)($to['json']['data']['status'] ?? 0);
+    $msg = (string)($to['json']['msg'] ?? '');
+    if ($code === 0 && $status === 2) return ['ok'=>true,'msg'=>'ok'];
+    return ['ok'=>false,'msg'=>($msg ?: ('code='.$code.' status='.$status))];
+  }
+
+  private function get_effective_creds(){
+    $opts   = get_option(Yoda_Admin::OPT_KEY, []);
+    $appId  = (defined('KAKO_APP_ID')  && KAKO_APP_ID)  ? KAKO_APP_ID  : ($opts['app_id']  ?? '');
+    $appKey = (defined('KAKO_APP_KEY') && KAKO_APP_KEY) ? KAKO_APP_KEY : ($opts['app_key'] ?? '');
+    if (defined('KAKO_API_BASE') && KAKO_API_BASE) {
+      $base = KAKO_API_BASE;
+    } else {
+      $base = $opts['base'] ?? '';
+      if (!$base){
+        $mode = $opts['mode'] ?? 'sandbox';
+        $base = ($mode === 'production') ? 'https://api.kako.live' : 'https://api-test.kako.live';
+      }
+    }
+    return [$appId,$appKey,$base];
   }
 
   private function draw_winner($raffle_id){
@@ -182,12 +446,19 @@ class Yoda_Raffles {
     if (empty($entries)) return 0;
     $winner_entry = (int)$entries[array_rand($entries)];
     update_post_meta($raffle_id, self::META_RAFFLE_WINNER_ID, $winner_entry);
+    $now = time();
     update_post_meta($raffle_id, self::META_RAFFLE_STATUS, 'drawn');
+    update_post_meta($raffle_id, self::META_RAFFLE_DRAWN_AT, $now);
+    update_post_meta($raffle_id, self::META_RAFFLE_LAST_ADMIN, (int)get_current_user_id());
+    add_post_meta($raffle_id, self::META_RAFFLE_AUDIT, sprintf('%s | drawn | admin #%d | winner entry #%d', date('c', $now), (int)get_current_user_id(), $winner_entry));
     if (class_exists('Yoda_Ledger')){
       Yoda_Ledger::log('raffle_draw', $raffle_id, 0, 0, Yoda_Ledger::STATUS_PAID, [
         'entry_id' => $winner_entry,
+        'prize_coins' => (int)get_post_meta($raffle_id, self::META_RAFFLE_PRIZE_COINS, true),
+        'by' => get_current_user_id(),
       ]);
     }
+    $this->maybe_pay_prize($raffle_id, $winner_entry);
     return $winner_entry;
   }
 
@@ -206,6 +477,20 @@ class Yoda_Raffles {
       ],
     ]);
     return array_map('intval', (array)$q->posts);
+  }
+
+  private function count_entries_for_user($raffle_id, $user_id){
+    $q = new WP_Query([
+      'post_type' => self::CPT_ENTRY,
+      'post_status' => 'publish',
+      'posts_per_page' => 1,
+      'fields' => 'ids',
+      'meta_query' => [
+        ['key'=>self::META_ENTRY_RAFFLE_ID, 'value'=>(string)(int)$raffle_id, 'compare'=>'='],
+        ['key'=>self::META_ENTRY_USER_ID, 'value'=>(string)(int)$user_id, 'compare'=>'='],
+      ],
+    ]);
+    return (int)($q->found_posts ?? 0);
   }
 
   private function count_entries($raffle_id){
@@ -340,6 +625,10 @@ class Yoda_Raffles {
     $user_id = get_current_user_id();
     if ($user_id <= 0) return 'Faça login para participar.';
 
+    $rl_key = 'yoda_raffle_join_rl_'.$user_id;
+    if (get_transient($rl_key)) return 'Aguarde alguns segundos antes de tentar novamente.';
+    set_transient($rl_key, 1, 15);
+
     $max = (int)get_post_meta($raffle_id, self::META_RAFFLE_MAX_USER, true);
     if ($max <= 0) $max = 1;
     $count = $this->count_user_entries($raffle_id, $user_id);
@@ -353,31 +642,18 @@ class Yoda_Raffles {
 
   private function get_open_raffles($limit){
     $now = time();
-    $q = new WP_Query([
-      'post_type' => self::CPT_RAFFLE,
-      'post_status' => 'publish',
-      'posts_per_page' => max(1, (int)$limit),
-      'orderby' => 'date',
-      'order' => 'DESC',
-      'meta_query' => [
-        [
-          'key' => self::META_RAFFLE_STATUS,
-          'value' => 'open',
-          'compare' => '=',
-        ],
-      ],
-    ]);
-
-    $out = [];
-    foreach ((array)$q->posts as $p){
-      $rid = (int)$p->ID;
-      $start = (int)get_post_meta($rid, self::META_RAFFLE_START_AT, true);
-      $end = (int)get_post_meta($rid, self::META_RAFFLE_END_AT, true);
-      if ($start && $now < $start) continue;
-      if ($end && $now > $end) continue;
-      $out[] = $p;
+    $ids = $this->get_open_raffles($limit, time());
+    $posts = [];
+    if ($ids){
+      $q = new WP_Query([
+        'post_type' => self::CPT_RAFFLE,
+        'post__in' => $ids,
+        'orderby' => 'post__in',
+        'posts_per_page' => count($ids),
+      ]);
+      $posts = (array)$q->posts;
     }
-    return $out;
+    return $posts;
   }
 
   private function create_entry($raffle_id, $user_id){

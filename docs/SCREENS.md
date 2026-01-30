@@ -1,49 +1,59 @@
-## Telas necessárias
+﻿## Telas necessÃ¡rias
 
-### 1) Admin – Configurações & Relatórios
-- **Menu:** Yoda → Revendedores / Cashback / Sorteios.
+### 1) Admin â€“ ConfiguraÃ§Ãµes & RelatÃ³rios
+- **Menu:** Yoda â†’ Revendedores / Cashback / Sorteios.
 - **Revendedores (Config)**
   - Ativar/Desativar.
-  - Parâmetro de link (`ref`), duração do cookie (dias).
-  - Comissão padrão (%), liberação após N dias, base de cálculo (total/subtotal), permitir auto-compra.
-  - Elegibilidade: roles permitidas e pedido mínimo (total).
-- **Revendedores (Relatórios)**
-  - Lista de comissões: pedido, afiliado, valor, status (a liberar/liberada/estornada), data de liberação.
-  - Filtros: período, status, afiliado.
-  - Ações: estornar, liberar manual.
+  - ParÃ¢metro de link (`ref`), duraÃ§Ã£o do cookie (dias).
+  - ComissÃ£o padrÃ£o (%), liberaÃ§Ã£o apÃ³s N dias, base de cÃ¡lculo (total/subtotal), permitir auto-compra.
+  - Elegibilidade: roles permitidas e pedido mÃ­nimo (total).
+- **Revendedores (RelatÃ³rios)**
+  - Lista de comissÃµes: pedido, afiliado, valor, status (a liberar/liberada/estornada), data de liberaÃ§Ã£o.
+  - Filtros: perÃ­odo, status, afiliado.
+  - AÃ§Ãµes: estornar, liberar manual, exportar CSV.
+- **Afiliados (Resumo)**
+  - Tabela com: ID, Nome, Email, Pedidos, Total vendido, ComissÃµes liberadas/pendentes, DisponÃ­vel para saque, Payouts pendentes/pagos.
+  - BotÃ£o Exportar CSV (respeita filtros).
 - **Cashback (Config)**
   - Ativar/Desativar.
-  - Percentual (%), arredondamento, resgate mínimo (moedas).
-  - Elegibilidade: roles permitidas e compra mínima (moedas) para crédito.
-- **Cashback (Relatórios)**
-  - Extrato de cashback: usuário, pedido, valor, status (creditado/estornado/resgatado/pendente), datas.
-  - Filtros: período, status, usuário.
-  - Ações: estornar movimentação, marcar como resgatado (manual).
+  - Percentual (%), arredondamento, resgate mÃ­nimo (moedas).
+  - Elegibilidade: roles permitidas e compra mÃ­nima (moedas) para crÃ©dito.
+- **Cashback (RelatÃ³rios)**
+  - Extrato de cashback: usuÃ¡rio, pedido, valor, status (creditado/estornado/resgatado/pendente), datas.
+  - Filtros: perÃ­odo, status, usuÃ¡rio.
+  - AÃ§Ãµes: estornar movimentaÃ§Ã£o, marcar como resgatado (manual), exportar CSV.
 - **Ledger (Admin)**
-  - Consulta rápida de lançamentos (`wp_yoda_ledger`): filtros por tipo/status/usuário, última página (50 registros).
+  - Consulta rÃ¡pida de lanÃ§amentos (`wp_yoda_ledger`): filtros por tipo/status/usuÃ¡rio, Ãºltima pÃ¡gina (50 registros).
   - Status padronizados: `pending`, `available`, `paid`, `reversed`, `blocked`.
 - **Sorteios (Admin)**
-  - Criar/editar sorteio: título/descrição, status (draft/open/closed/drawn), início/fim, máx. inscrições por usuário.
-  - Botão “Sortear vencedor” e exibir entry vencedora.
+  - Criar/editar sorteio: tÃ­tulo/descriÃ§Ã£o, status (draft/open/closed/drawn), inÃ­cio/fim, mÃ¡x. inscriÃ§Ãµes por usuÃ¡rio.
+  - BotÃµes â€œSortear vencedorâ€� e â€œEncerrar e sortearâ€�; exibir entry vencedora.
 
 ### 2) Portal do Afiliado
-- Acesso: **Minha Conta → Revendedor** ou `[yoda_affiliate_portal]`.
+- Acesso: **Minha Conta â†’ Revendedor** ou `[yoda_affiliate_portal]`.
 - Blocos:
-  - Link pessoal com parâmetro de referência.
-  - Cards resumo: vendas atribuídas, total vendido, comissões liberadas.
-  - Tabela de comissões: pedido, valor, status (a liberar/liberada/estornada), data de liberação.
-  - (Futuro) filtro por período/status.
-- Visibilidade: exibido para usuários com role `yoda_affiliate` e, para fins de suporte, também para administradores (`manage_options`).
+  - Link pessoal com parÃ¢metro de referÃªncia.
+  - Cards resumo: vendas atribuÃ­das, total vendido, comissÃµes liberadas.
+  - Lista de pedidos indicados: mostra pedido, status do pedido, valor da comissÃ£o, status da comissÃ£o, data/liberaÃ§Ã£o.
+  - Tabela de comissÃµes: pedido, valor, status (a liberar/liberada/estornada), data de liberaÃ§Ã£o.
+  - Saque manual: mostra saldo disponÃ­vel/pendente/pago, formulÃ¡rio de solicitaÃ§Ã£o e histÃ³rico de saques.
+  - (Futuro) filtro por perÃ­odo/status.
+- Visibilidade: exibido para usuÃ¡rios com role `yoda_affiliate` e, para fins de suporte, tambÃ©m para administradores (`manage_options`).
 
-### Papéis
-- **Admin**: WP nativo (`manage_options`), vê e gerencia tudo, inclusive portais para suporte.
-- **Revendedor (Afiliado)**: role custom `yoda_affiliate` (criada na ativação e revalidada em runtime).
-- **Cliente**: role WooCommerce padrão `customer`.
+### PapÃ©is
+- **Admin**: WP nativo (`manage_options`), vÃª e gerencia tudo, inclusive portais para suporte.
+- **Revendedor (Afiliado)**: role custom `yoda_affiliate` (criada na ativaÃ§Ã£o e revalidada em runtime).
+- **Cliente**: role WooCommerce padrÃ£o `customer`.
 
 ### 3) Portal de Cashback (Cliente)
-- Acesso: **Minha Conta → Cashback** ou `[yoda_cashback_portal]`.
+- Acesso: **Minha Conta â†’ Cashback** ou `[yoda_cashback_portal]`.
 - Blocos:
-  - Saldo disponível + resgate mínimo.
-  - Formulário de resgate: valor (moedas) e KakoID (pré-preenche último usado).
-  - Extrato: data, tipo (crédito/resgate), valor em moedas, status (creditado/pendente/estornado/resgatado/falhou).
+  - Saldo disponÃ­vel + resgate mÃ­nimo.
+  - Cards resumo: pendente, disponÃ­vel, resgatado, estornado (moedas).
+  - FormulÃ¡rio de resgate: valor (moedas) e KakoID (prÃ©-preenche Ãºltimo usado).
+  - Extrato: data, tipo (crÃ©dito/resgate), valor em moedas, status (creditado/pendente/estornado/resgatado/falhou).
+  - Alertas no portal: novos créditos desde a última visita e status do último resgate (pendente/concluído/recusado/falha).
+  - Admin pode aprovar/recusar/forçar processamento de resgates e registrar motivo.
   - Mensagens de erro/sucesso em linha.
+## Notas adicionais
+- Menu na Minha Conta Ã© exibido como **Carteira / Cashback**.

@@ -12,6 +12,7 @@ class Yoda_Affiliates {
   const META_ORDER_COMMISSION_ID  = '_yoda_commission_id';
 
   const CPT_COMMISSION = 'yoda_commission';
+  const CPT_PAYOUT     = 'yoda_aff_payout';
 
   const META_COMM_ORDER_ID      = '_yoda_order_id';
   const META_COMM_AFFILIATE_ID  = '_yoda_affiliate_id';
@@ -28,6 +29,13 @@ class Yoda_Affiliates {
   const STATUS_RELEASED  = 'liberada';
   const STATUS_REVERSED  = 'estornada';
 
+  // Payouts
+  const META_PAYOUT_USER    = '_yoda_payout_user';
+  const META_PAYOUT_AMOUNT  = '_yoda_payout_amount';
+  const META_PAYOUT_STATUS  = '_yoda_payout_status'; // pending|paid|rejected
+  const META_PAYOUT_REQUEST = '_yoda_payout_requested_at';
+  const META_PAYOUT_PAID_AT = '_yoda_payout_paid_at';
+
   const CRON_RELEASE = 'yoda_affiliates_release_commissions';
 
   public function hooks(){
@@ -35,6 +43,7 @@ class Yoda_Affiliates {
     add_action('init', [$this,'ensure_runtime_setup'], 1);
 
     add_action('init', [$this,'register_cpt']);
+    add_action('init', [$this,'register_payout_cpt']);
     add_action('init', [$this,'maybe_capture_affiliate_from_link'], 2);
 
     // My Account endpoint + shortcode do portal
@@ -42,6 +51,8 @@ class Yoda_Affiliates {
     add_filter('woocommerce_account_menu_items', [$this,'add_my_account_menu_item']);
     add_action('woocommerce_account_yoda-revendedor_endpoint', [$this,'render_my_account_page']);
     add_shortcode('yoda_affiliate_portal', [$this,'portal_shortcode']);
+    add_action('admin_post_yoda_aff_request_payout', [$this,'handle_payout_request']);
+    add_action('admin_post_nopriv_yoda_aff_request_payout', '__return_false');
 
     // Admin
     if (is_admin()){
@@ -53,6 +64,8 @@ class Yoda_Affiliates {
       add_action('edit_user_profile_update', [$this,'save_user_profile_fields']);
       add_action('admin_post_yoda_aff_release', [$this,'handle_admin_release']);
       add_action('admin_post_yoda_aff_reverse', [$this,'handle_admin_reverse']);
+      add_action('admin_post_yoda_aff_payout_paid', [$this,'handle_admin_payout_paid']);
+      add_action('admin_post_yoda_aff_payout_reject', [$this,'handle_admin_payout_reject']);
     }
 
     // Checkout/order attribution
@@ -115,6 +128,10 @@ class Yoda_Affiliates {
       'release_after_days' => 7,
       'base' => 'total', // total|subtotal
       'allow_self' => 0,
+      'eligible_roles' => 'customer',
+      'min_order_total' => 0,
+      'payout_min' => 0,
+      'payout_admin_email' => '',
     ];
     $o = get_option(self::OPT_KEY, []);
     if (!is_array($o)) $o = [];
@@ -128,6 +145,8 @@ class Yoda_Affiliates {
     $o['allow_self'] = (int)!!$o['allow_self'];
     $o['eligible_roles'] = trim((string)$o['eligible_roles']);
     $o['min_order_total'] = max(0, (int)$o['min_order_total']);
+    $o['payout_min'] = max(0, (float)$o['payout_min']);
+    $o['payout_admin_email'] = sanitize_email($o['payout_admin_email']);
     return $o;
   }
 
@@ -139,6 +158,21 @@ class Yoda_Affiliates {
       'labels' => [
         'name' => 'Comissões (Revendedores)',
         'singular_name' => 'Comissão',
+      ],
+      'public' => false,
+      'show_ui' => true,
+      'show_in_menu' => 'yoda-kako',
+      'supports' => ['title'],
+      'capability_type' => 'post',
+      'map_meta_cap' => true,
+    ]);
+  }
+
+  public function register_payout_cpt(){
+    register_post_type(self::CPT_PAYOUT, [
+      'labels' => [
+        'name' => 'Payouts (Afiliados)',
+        'singular_name' => 'Payout',
       ],
       'public' => false,
       'show_ui' => true,
@@ -168,6 +202,22 @@ class Yoda_Affiliates {
       'manage_options',
       'yoda-affiliates-report',
       [$this,'admin_report_page']
+    );
+    add_submenu_page(
+      'yoda-kako',
+      'Afiliados (Resumo)',
+      'Afiliados (Resumo)',
+      'manage_options',
+      'yoda-affiliates-summary',
+      [$this,'admin_summary_page']
+    );
+    add_submenu_page(
+      'yoda-kako',
+      'Payouts (Afiliados)',
+      'Payouts (Afiliados)',
+      'manage_options',
+      'yoda-affiliates-payouts',
+      [$this,'admin_payouts_page']
     );
   }
 
@@ -250,6 +300,19 @@ class Yoda_Affiliates {
               <p class="description">Só gera comissão se o total do pedido for pelo menos este valor.</p>
             </td>
           </tr>
+          <tr>
+            <th scope="row"><label>Valor mínimo de saque</label></th>
+            <td>
+              <input type="number" min="0" step="0.01" name="<?php echo esc_attr(self::OPT_KEY); ?>[payout_min]" value="<?php echo esc_attr((float)$o['payout_min']); ?>">
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><label>E-mail para notificação de saque</label></th>
+            <td>
+              <input type="email" name="<?php echo esc_attr(self::OPT_KEY); ?>[payout_admin_email]" value="<?php echo esc_attr($o['payout_admin_email']); ?>" class="regular-text" placeholder="<?php echo esc_attr(get_option('admin_email')); ?>">
+              <p class="description">Se vazio, usa o e-mail do administrador do WordPress.</p>
+            </td>
+          </tr>
         </table>
         <?php submit_button('Salvar'); ?>
       </form>
@@ -290,6 +353,7 @@ class Yoda_Affiliates {
       ];
     }
 
+    $export = isset($_GET['export']) && $_GET['export'] === 'csv';
     $q = new WP_Query([
       'post_type' => self::CPT_COMMISSION,
       'post_status' => 'publish',
@@ -299,6 +363,27 @@ class Yoda_Affiliates {
       'meta_query' => $meta_query ?: null,
       'date_query' => $this->build_date_query($date_from, $date_to),
     ]);
+
+    if ($export){
+      header('Content-Type: text/csv; charset=utf-8');
+      header('Content-Disposition: attachment; filename=afiliados-comissoes.csv');
+      $out = fopen('php://output', 'w');
+      fputcsv($out, ['ID','Pedido','Afiliado','Valor','Status','Liberacao','OrderRef','Motivo']);
+      foreach ((array)$q->posts as $p){
+        $cid   = $p->ID;
+        $order_id = (int)get_post_meta($cid, self::META_COMM_ORDER_ID, true);
+        $affid = (int)get_post_meta($cid, self::META_COMM_AFFILIATE_ID, true);
+        $amount = (float)get_post_meta($cid, self::META_COMM_AMOUNT, true);
+        $stat = (string)get_post_meta($cid, self::META_COMM_STATUS, true);
+        $avail = (int)get_post_meta($cid, self::META_COMM_AVAILABLE_AT, true);
+        $rel   = (int)get_post_meta($cid, self::META_COMM_RELEASED_AT, true);
+        $when = $rel ? date_i18n('Y-m-d', $rel) : ($avail ? date_i18n('Y-m-d', $avail) : '-');
+        $order_ref = get_post_meta($order_id, Yoda_Fulfillment::META_ORDER_REF, true);
+        $reason = get_post_meta($cid, self::META_COMM_REASON, true);
+        fputcsv($out, [$cid, $order_id, $affid, $amount, $stat, $when, $order_ref, $reason]);
+      }
+      exit;
+    }
 
     ?>
     <div class="wrap">
@@ -324,6 +409,7 @@ class Yoda_Affiliates {
           <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
         </label>
         <button class="button">Filtrar</button>
+        <a class="button button-primary" href="<?php echo esc_url(add_query_arg('export','csv')); ?>">Exportar CSV</a>
       </form>
 
       <table class="widefat striped">
@@ -369,6 +455,247 @@ class Yoda_Affiliates {
                 <?php endif; ?>
                 <?php if ($stat !== self::STATUS_REVERSED): ?>
                   <a class="button button-secondary" href="<?php echo esc_url($reverse_url); ?>">Estornar</a>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php
+  }
+
+  public function admin_summary_page(){
+    if (!current_user_can('manage_options')) return;
+    $export = isset($_GET['export']) && $_GET['export'] === 'csv';
+    $search = isset($_GET['s']) ? sanitize_text_field(wp_unslash($_GET['s'])) : '';
+    $date_from = isset($_GET['from']) ? sanitize_text_field(wp_unslash($_GET['from'])) : '';
+    $date_to   = isset($_GET['to'])   ? sanitize_text_field(wp_unslash($_GET['to']))   : '';
+    $paged  = max(1, (int)($_GET['paged'] ?? 1));
+    $per_page = 50;
+    $user_query_args = [
+      'role'   => 'yoda_affiliate',
+      'fields' => ['ID','display_name','user_email'],
+      'number' => $per_page,
+      'offset' => ($paged-1)*$per_page,
+    ];
+    if ($search){
+      $user_query_args['search'] = '*'.$search.'*';
+      $user_query_args['search_columns'] = ['user_login','user_email','display_name'];
+    }
+    $users = get_users($user_query_args);
+    $total_users = (new WP_User_Query(array_merge($user_query_args, ['count_total'=>true,'number'=>0,'offset'=>0])))->get_total();
+    $total_pages = max(1, (int)ceil($total_users / $per_page));
+
+    $rows = [];
+    foreach ($users as $u){
+      $uid = $u->ID;
+      $balance = $this->get_affiliate_balance_split($uid, $date_from, $date_to);
+      $stats = $this->get_affiliate_stats($uid, $date_from, $date_to);
+      $rows[] = [
+        'id' => $uid,
+        'name' => $u->display_name,
+        'email' => $u->user_email,
+        'orders' => $stats['orders_count'],
+        'sold' => $stats['orders_total'],
+        'released' => $balance['released'],
+        'pending' => $balance['pending'],
+        'available_payout' => $balance['available_payout'],
+        'pending_payout' => $balance['pending_payout'],
+        'paid_payout' => $balance['paid_payout'],
+      ];
+    }
+
+    if ($export){
+      header('Content-Type: text/csv; charset=utf-8');
+      header('Content-Disposition: attachment; filename=afiliados-resumo.csv');
+      $out = fopen('php://output', 'w');
+      fputcsv($out, ['ID','Nome','Email','Pedidos','Total vendido','Comissões liberadas','Comissões pendentes','Disponível saque','Payouts pendentes','Payouts pagos']);
+      foreach ($rows as $r){
+        fputcsv($out, [
+          $r['id'],
+          $r['name'],
+          $r['email'],
+          $r['orders'],
+          $r['sold'],
+          $r['released'],
+          $r['pending'],
+          $r['available_payout'],
+          $r['pending_payout'],
+          $r['paid_payout'],
+        ]);
+      }
+      exit;
+    }
+
+    ?>
+    <div class="wrap">
+      <h1>Afiliados (Resumo)</h1>
+      <form method="get" style="margin:0 0 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="hidden" name="page" value="yoda-affiliates-summary">
+        <label>Buscar (nome/email):
+          <input type="search" name="s" value="<?php echo esc_attr($search); ?>" />
+        </label>
+        <button class="button">Filtrar</button>
+        <label>De:
+          <input type="date" name="from" value="<?php echo esc_attr($date_from); ?>">
+        </label>
+        <label>Até:
+          <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
+        </label>
+        <a class="button button-secondary" href="<?php echo esc_url(remove_query_arg(['s','paged','export','from','to'])); ?>">Limpar</a>
+        <a class="button button-primary" href="<?php echo esc_url(add_query_arg('export','csv')); ?>">Exportar CSV</a>
+      </form>
+      <p>Resumo de desempenho por afiliado. Página <?php echo esc_html($paged); ?> de <?php echo esc_html($total_pages); ?>.</p>
+      <table class="widefat striped">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Nome</th>
+            <th>Email</th>
+            <th>Pedidos</th>
+            <th>Total vendido</th>
+            <th>Comissões liberadas</th>
+            <th>Comissões pendentes</th>
+            <th>Disponível saque</th>
+            <th>Payouts pendentes</th>
+            <th>Payouts pagos</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if (empty($rows)): ?>
+            <tr><td colspan="10">Nenhum afiliado.</td></tr>
+          <?php else: ?>
+            <?php foreach ($rows as $r): ?>
+              <tr>
+                <td><?php echo esc_html($r['id']); ?></td>
+                <td><?php echo esc_html($r['name']); ?></td>
+                <td><?php echo esc_html($r['email']); ?></td>
+                <td><?php echo esc_html($r['orders']); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['sold'])); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['released'])); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['pending'])); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['available_payout'])); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['pending_payout'])); ?></td>
+                <td><?php echo wp_kses_post(wc_price($r['paid_payout'])); ?></td>
+              </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+      <?php if ($total_pages > 1): ?>
+        <div class="tablenav">
+          <div class="tablenav-pages">
+            <?php
+              $base = remove_query_arg('paged');
+              $prev = $paged > 1 ? add_query_arg('paged', $paged-1, $base) : '';
+              $next = $paged < $total_pages ? add_query_arg('paged', $paged+1, $base) : '';
+            ?>
+            <?php if ($prev): ?><a class="button" href="<?php echo esc_url($prev); ?>">&laquo; Anterior</a><?php endif; ?>
+            <?php if ($next): ?><a class="button" href="<?php echo esc_url($next); ?>">Próxima &raquo;</a><?php endif; ?>
+          </div>
+        </div>
+      <?php endif; ?>
+    </div>
+    <?php
+  }
+
+  public function admin_payouts_page(){
+    if (!current_user_can('manage_options')) return;
+    $status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+    $user_id = isset($_GET['user']) ? (int)$_GET['user'] : 0;
+    $date_from = isset($_GET['from']) ? sanitize_text_field(wp_unslash($_GET['from'])) : '';
+    $date_to   = isset($_GET['to'])   ? sanitize_text_field(wp_unslash($_GET['to']))   : '';
+
+    $meta_query = [];
+    if ($status){
+      $meta_query[] = [
+        'key' => self::META_PAYOUT_STATUS,
+        'value' => $status,
+        'compare' => '=',
+      ];
+    }
+    if ($user_id > 0){
+      $meta_query[] = [
+        'key' => self::META_PAYOUT_USER,
+        'value' => (string)$user_id,
+        'compare' => '=',
+      ];
+    }
+
+    $q = new WP_Query([
+      'post_type' => self::CPT_PAYOUT,
+      'post_status' => 'publish',
+      'posts_per_page' => 50,
+      'orderby' => 'date',
+      'order' => 'DESC',
+      'meta_query' => $meta_query ?: null,
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+    ?>
+    <div class="wrap">
+      <h1>Payouts de Afiliados</h1>
+      <form method="get" style="margin:12px 0;">
+        <input type="hidden" name="page" value="yoda-affiliates-payouts">
+        <label>Status:
+          <select name="status">
+            <option value="">(todos)</option>
+            <option value="pending" <?php selected($status, 'pending'); ?>>Pendente</option>
+            <option value="paid" <?php selected($status, 'paid'); ?>>Pago</option>
+            <option value="rejected" <?php selected($status, 'rejected'); ?>>Rejeitado</option>
+          </select>
+        </label>
+        <label style="margin-left:10px;">Afiliado (ID):
+          <input type="number" name="user" value="<?php echo esc_attr($user_id ?: ''); ?>" style="width:90px;">
+        </label>
+        <label style="margin-left:10px;">De:
+          <input type="date" name="from" value="<?php echo esc_attr($date_from); ?>">
+        </label>
+        <label style="margin-left:10px;">Até:
+          <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
+        </label>
+        <button class="button">Filtrar</button>
+      </form>
+
+      <table class="widefat striped">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Afiliado</th>
+            <th>Valor</th>
+            <th>Status</th>
+            <th>Solicitado em</th>
+            <th>Pago em</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($q->posts)): ?>
+          <tr><td colspan="7">Nenhum payout.</td></tr>
+        <?php else: ?>
+          <?php foreach ($q->posts as $p): ?>
+            <?php
+              $pid = $p->ID;
+              $uid = (int)get_post_meta($pid, self::META_PAYOUT_USER, true);
+              $amount = (float)get_post_meta($pid, self::META_PAYOUT_AMOUNT, true);
+              $pstatus = (string)get_post_meta($pid, self::META_PAYOUT_STATUS, true);
+              $req = (int)get_post_meta($pid, self::META_PAYOUT_REQUEST, true);
+              $paid = (int)get_post_meta($pid, self::META_PAYOUT_PAID_AT, true);
+              $pay_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_aff_payout_paid&pid='.$pid), 'yoda_aff_payout_paid_'.$pid);
+              $rej_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_aff_payout_reject&pid='.$pid), 'yoda_aff_payout_reject_'.$pid);
+            ?>
+            <tr>
+              <td>#<?php echo esc_html($pid); ?></td>
+              <td><?php echo $uid ? '<a href="'.esc_url(get_edit_user_link($uid)).'">#'.$uid.'</a>' : '-'; ?></td>
+              <td><?php echo wp_kses_post(wc_price($amount)); ?></td>
+              <td><?php echo esc_html($pstatus ?: 'pending'); ?></td>
+              <td><?php echo $req ? esc_html(date_i18n('Y-m-d H:i', $req)) : '-'; ?></td>
+              <td><?php echo $paid ? esc_html(date_i18n('Y-m-d H:i', $paid)) : '-'; ?></td>
+              <td>
+                <?php if ($pstatus === 'pending'): ?>
+                  <a class="button" href="<?php echo esc_url($pay_url); ?>">Marcar pago</a>
+                  <a class="button button-secondary" href="<?php echo esc_url($rej_url); ?>">Rejeitar</a>
                 <?php endif; ?>
               </td>
             </tr>
@@ -786,6 +1113,84 @@ class Yoda_Affiliates {
     }
   }
 
+  /* ========================================================================
+   * Payouts (saque manual)
+   * ======================================================================== */
+  public function handle_payout_request(){
+    if (!is_user_logged_in()) wp_die('Faça login');
+    $user_id = get_current_user_id();
+    check_admin_referer('yoda_aff_payout_request');
+    $amount = isset($_POST['amount']) ? (float)$_POST['amount'] : 0;
+    if ($amount <= 0){
+      wp_safe_redirect(add_query_arg('ymsg', rawurlencode('Informe um valor válido.'), wp_get_referer() ?: home_url())); exit;
+    }
+    $balance = $this->get_affiliate_balance_split($user_id);
+    $available = max(0, $balance['released'] - $balance['pending_payout'] - $balance['paid_payout']);
+    $opts = self::get_opts();
+    $min = (float)$opts['payout_min'];
+    if ($amount < $min){
+      wp_safe_redirect(add_query_arg('ymsg', rawurlencode('Valor mínimo de saque: '.wc_price($min)), wp_get_referer() ?: home_url())); exit;
+    }
+    if ($amount > $available){
+      wp_safe_redirect(add_query_arg('ymsg', rawurlencode('Valor acima do disponível.'), wp_get_referer() ?: home_url())); exit;
+    }
+    $title = sprintf('Payout afiliado #%d - %s', $user_id, date_i18n('Y-m-d'));
+    $pid = wp_insert_post([
+      'post_type' => self::CPT_PAYOUT,
+      'post_status' => 'publish',
+      'post_title' => $title,
+    ], true);
+    if (is_wp_error($pid)){
+      wp_safe_redirect(add_query_arg('ymsg', rawurlencode('Erro ao criar payout.'), wp_get_referer() ?: home_url())); exit;
+    }
+    update_post_meta($pid, self::META_PAYOUT_USER, $user_id);
+    update_post_meta($pid, self::META_PAYOUT_AMOUNT, $amount);
+    update_post_meta($pid, self::META_PAYOUT_STATUS, 'pending');
+    update_post_meta($pid, self::META_PAYOUT_REQUEST, time());
+
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('affiliate_payout', $pid, $user_id, -$amount, Yoda_Ledger::STATUS_PENDING, []);
+    }
+
+    $this->notify_affiliate_payout($user_id, $amount, 'pendente', $pid);
+    $this->notify_admin_payout($user_id, $amount, 'pending', $pid);
+
+    wp_safe_redirect(add_query_arg('ymsg', rawurlencode('Solicitação enviada!'), wp_get_referer() ?: home_url())); exit;
+  }
+
+  public function handle_admin_payout_paid(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $pid = isset($_GET['pid']) ? (int)$_GET['pid'] : 0;
+    if (!$pid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_aff_payout_paid_'.$pid)) wp_die('Nonce inválido');
+    update_post_meta($pid, self::META_PAYOUT_STATUS, 'paid');
+    update_post_meta($pid, self::META_PAYOUT_PAID_AT, time());
+    $amount = (float)get_post_meta($pid, self::META_PAYOUT_AMOUNT, true);
+    $uid = (int)get_post_meta($pid, self::META_PAYOUT_USER, true);
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('affiliate_payout', $pid, $uid, -$amount, Yoda_Ledger::STATUS_PAID, []);
+    }
+    $this->notify_affiliate_payout($uid, $amount, 'pago', $pid);
+    $this->notify_admin_payout($uid, $amount, 'paid', $pid);
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-affiliates-payouts'));
+    exit;
+  }
+
+  public function handle_admin_payout_reject(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $pid = isset($_GET['pid']) ? (int)$_GET['pid'] : 0;
+    if (!$pid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_aff_payout_reject_'.$pid)) wp_die('Nonce inválido');
+    update_post_meta($pid, self::META_PAYOUT_STATUS, 'rejected');
+    $amount = (float)get_post_meta($pid, self::META_PAYOUT_AMOUNT, true);
+    $uid = (int)get_post_meta($pid, self::META_PAYOUT_USER, true);
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('affiliate_payout', $pid, $uid, 0, Yoda_Ledger::STATUS_BLOCKED, []);
+    }
+    $this->notify_affiliate_payout($uid, $amount, 'rejeitado', $pid);
+    $this->notify_admin_payout($uid, $amount, 'rejected', $pid);
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-affiliates-payouts'));
+    exit;
+  }
+
   private function release_commission($commission_id){
     $status = (string)get_post_meta($commission_id, self::META_COMM_STATUS, true);
     if ($status !== self::STATUS_HOLD) return false;
@@ -868,8 +1273,15 @@ class Yoda_Affiliates {
     $code = $this->get_or_create_affiliate_code($affiliate_id);
     $link = add_query_arg([$opts['param'] => $code], home_url('/'));
 
-    $stats = $this->get_affiliate_stats($affiliate_id);
-    $commissions = $this->get_affiliate_commissions($affiliate_id, 50);
+    $date_from = isset($_GET['yfrom']) ? sanitize_text_field(wp_unslash($_GET['yfrom'])) : '';
+    $date_to   = isset($_GET['yto'])   ? sanitize_text_field(wp_unslash($_GET['yto']))   : '';
+
+    $stats = $this->get_affiliate_stats($affiliate_id, $date_from, $date_to);
+    $balance = $this->get_affiliate_balance_split($affiliate_id, $date_from, $date_to);
+    $commissions = $this->get_affiliate_commissions($affiliate_id, 50, $date_from, $date_to);
+    $payouts = $this->get_affiliate_payouts($affiliate_id, 20, $date_from, $date_to);
+    $available_payout = $balance['available_payout'];
+    $msg = isset($_GET['ymsg']) ? sanitize_text_field(wp_unslash($_GET['ymsg'])) : '';
 
     ob_start();
     ?>
@@ -878,10 +1290,13 @@ class Yoda_Affiliates {
 
       <div style="margin:12px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">
         <p style="margin:0 0 6px;"><strong>Seu link:</strong></p>
-        <p style="margin:0;"><code><?php echo esc_html($link); ?></code></p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <code id="yoda-aff-link" style="padding:4px 6px;display:inline-block;"><?php echo esc_html($link); ?></code>
+          <button type="button" class="button" onclick="(function(){var t=document.getElementById('yoda-aff-link'); if(!t) return; navigator.clipboard.writeText(t.textContent||t.innerText||'').then(function(){alert('Link copiado!');}); })();">Copiar</button>
+        </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:12px;margin:12px 0;">
+      <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:12px;margin:12px 0;">
         <div style="padding:12px;border:1px solid #eee;border-radius:8px;">
           <div style="opacity:.7;">Vendas atribuídas</div>
           <div style="font-size:20px;font-weight:700;"><?php echo esc_html((int)$stats['orders_count']); ?></div>
@@ -891,29 +1306,104 @@ class Yoda_Affiliates {
           <div style="font-size:20px;font-weight:700;"><?php echo wp_kses_post(wc_price($stats['orders_total'])); ?></div>
         </div>
         <div style="padding:12px;border:1px solid #eee;border-radius:8px;">
-          <div style="opacity:.7;">Comissões (liberadas)</div>
-          <div style="font-size:20px;font-weight:700;"><?php echo wp_kses_post(wc_price($stats['released_total'])); ?></div>
+          <div style="opacity:.7;">Comissões liberadas</div>
+          <div style="font-size:20px;font-weight:700;"><?php echo wp_kses_post(wc_price($balance['released'])); ?></div>
+        </div>
+        <div style="padding:12px;border:1px solid #eee;border-radius:8px;">
+          <div style="opacity:.7;">Comissões pendentes</div>
+          <div style="font-size:20px;font-weight:700;"><?php echo wp_kses_post(wc_price($balance['pending'])); ?></div>
         </div>
       </div>
 
+      <?php if ($msg): ?>
+        <div class="woocommerce-info" style="margin:8px 0;"><?php echo esc_html($msg); ?></div>
+      <?php endif; ?>
+
+      <div style="padding:12px;border:1px solid #ddd;border-radius:8px;margin:12px 0;">
+        <h3 style="margin-top:0;">Saque (payout)</h3>
+        <p style="margin:0 0 8px;">Disponível para saque: <strong><?php echo wp_kses_post(wc_price($available_payout)); ?></strong> &nbsp;|&nbsp; Pendentes: <?php echo wp_kses_post(wc_price($balance['pending_payout'])); ?> &nbsp;|&nbsp; Pagos: <?php echo wp_kses_post(wc_price($balance['paid_payout'])); ?></p>
+        <?php if ($available_payout <= 0): ?>
+          <div class="woocommerce-info">Você ainda não tem saldo disponível para saque.</div>
+        <?php else: ?>
+          <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0;">
+            <?php wp_nonce_field('yoda_aff_payout_request'); ?>
+            <input type="hidden" name="action" value="yoda_aff_request_payout">
+            <label>Valor:
+              <input type="number" name="amount" min="0.01" step="0.01" max="<?php echo esc_attr($available_payout); ?>" value="<?php echo esc_attr($available_payout); ?>" style="width:120px;">
+            </label>
+            <button class="button button-primary" type="submit">Solicitar saque</button>
+          </form>
+        <?php endif; ?>
+      </div>
+
       <h3>Comissões</h3>
+      <form method="get" style="margin:0 0 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <?php
+          $base_url = remove_query_arg(['ystatus']);
+          $current_status = isset($_GET['ystatus']) ? sanitize_text_field(wp_unslash($_GET['ystatus'])) : '';
+        ?>
+        <label>Status:
+          <select name="ystatus">
+            <option value="">(todos)</option>
+            <option value="<?php echo esc_attr(self::STATUS_HOLD); ?>" <?php selected($current_status, self::STATUS_HOLD); ?>>A liberar</option>
+            <option value="<?php echo esc_attr(self::STATUS_RELEASED); ?>" <?php selected($current_status, self::STATUS_RELEASED); ?>>Liberada</option>
+            <option value="<?php echo esc_attr(self::STATUS_REVERSED); ?>" <?php selected($current_status, self::STATUS_REVERSED); ?>>Estornada</option>
+          </select>
+        </label>
+        <label>De:
+          <input type="date" name="yfrom" value="<?php echo esc_attr($date_from); ?>">
+        </label>
+        <label>Até:
+          <input type="date" name="yto" value="<?php echo esc_attr($date_to); ?>">
+        </label>
+        <button class="button">Filtrar</button>
+        <a class="button button-secondary" href="<?php echo esc_url(remove_query_arg(['ystatus','yfrom','yto'])); ?>">Limpar filtro</a>
+      </form>
       <?php if (empty($commissions)): ?>
         <div class="woocommerce-info">Nenhuma comissão encontrada ainda.</div>
       <?php else: ?>
         <table class="shop_table shop_table_responsive my_account_orders">
           <thead><tr>
             <th>Pedido</th>
-            <th>Valor</th>
-            <th>Status</th>
+            <th>Status pedido</th>
+            <th>Valor comissão</th>
+            <th>Status comissão</th>
             <th>Liberação</th>
           </tr></thead>
           <tbody>
           <?php foreach ($commissions as $c): ?>
             <tr>
               <td>#<?php echo esc_html($c['order_number']); ?></td>
+              <td><?php echo esc_html($c['order_status']); ?></td>
               <td><?php echo wp_kses_post(wc_price($c['amount'])); ?></td>
               <td><?php echo esc_html($c['status_label']); ?></td>
               <td><?php echo esc_html($c['when']); ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+
+      <h3 style="margin-top:24px;">Solicitações de saque</h3>
+      <?php if (empty($payouts)): ?>
+        <div class="woocommerce-info">Nenhum saque solicitado ainda.</div>
+      <?php else: ?>
+        <table class="shop_table shop_table_responsive my_account_orders">
+          <thead><tr>
+            <th>ID</th>
+            <th>Valor</th>
+            <th>Status</th>
+            <th>Solicitado</th>
+            <th>Pago em</th>
+          </tr></thead>
+          <tbody>
+          <?php foreach ($payouts as $p): ?>
+            <tr>
+              <td>#<?php echo esc_html($p['id']); ?></td>
+              <td><?php echo wp_kses_post(wc_price($p['amount'])); ?></td>
+              <td><?php echo esc_html($p['status_label']); ?></td>
+              <td><?php echo esc_html($p['requested']); ?></td>
+              <td><?php echo esc_html($p['paid_at']); ?></td>
             </tr>
           <?php endforeach; ?>
           </tbody>
@@ -924,7 +1414,7 @@ class Yoda_Affiliates {
     return ob_get_clean();
   }
 
-  private function get_affiliate_stats($affiliate_id){
+  private function get_affiliate_stats($affiliate_id, $date_from = null, $date_to = null){
     $orders = wc_get_orders([
       'limit' => 200,
       'status' => ['processing','completed'],
@@ -937,6 +1427,7 @@ class Yoda_Affiliates {
           'compare' => '=',
         ]
       ],
+      'date_created' => $this->build_order_date_range($date_from, $date_to),
     ]);
 
     $count = 0;
@@ -976,8 +1467,9 @@ class Yoda_Affiliates {
     ];
   }
 
-  private function get_affiliate_commissions($affiliate_id, $limit){
-    $q = new WP_Query([
+  private function get_affiliate_commissions($affiliate_id, $limit, $date_from = null, $date_to = null){
+    $status_filter = isset($_GET['ystatus']) ? sanitize_text_field(wp_unslash($_GET['ystatus'])) : '';
+    $query_args = [
       'post_type' => self::CPT_COMMISSION,
       'post_status' => 'publish',
       'posts_per_page' => max(1, (int)$limit),
@@ -992,13 +1484,23 @@ class Yoda_Affiliates {
           'compare' => '=',
         ]
       ],
-    ]);
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ];
+    if ($status_filter){
+      $query_args['meta_query'][] = [
+        'key' => self::META_COMM_STATUS,
+        'value' => $status_filter,
+        'compare' => '=',
+      ];
+    }
+    $q = new WP_Query($query_args);
 
     $out = [];
     foreach ((array)$q->posts as $cid){
       $order_id = (int)get_post_meta($cid, self::META_COMM_ORDER_ID, true);
       $order = $order_id ? wc_get_order($order_id) : null;
       $order_number = $order ? $order->get_order_number() : (string)$order_id;
+      $order_status = $order ? wc_get_order_status_name($order->get_status()) : '-';
       $amount = (float)get_post_meta($cid, self::META_COMM_AMOUNT, true);
       $status = (string)get_post_meta($cid, self::META_COMM_STATUS, true);
       $avail = (int)get_post_meta($cid, self::META_COMM_AVAILABLE_AT, true);
@@ -1019,10 +1521,106 @@ class Yoda_Affiliates {
         'commission_id' => (int)$cid,
         'order_id' => $order_id,
         'order_number' => $order_number,
+        'order_status' => $order_status,
         'amount' => $amount,
         'status' => $status,
         'status_label' => $label,
         'when' => $when,
+      ];
+    }
+    return $out;
+  }
+
+  private function get_affiliate_balance_split($affiliate_id, $date_from = null, $date_to = null){
+    $pending = 0.0; $released = 0.0;
+    $q = new WP_Query([
+      'post_type' => self::CPT_COMMISSION,
+      'post_status' => 'publish',
+      'posts_per_page' => 500,
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_COMM_AFFILIATE_ID,
+          'value' => (string)(int)$affiliate_id,
+          'compare' => '=',
+        ]
+      ],
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+    foreach ((array)$q->posts as $cid){
+      $status = (string)get_post_meta($cid, self::META_COMM_STATUS, true);
+      $amount = (float)get_post_meta($cid, self::META_COMM_AMOUNT, true);
+      if ($status === self::STATUS_RELEASED) $released += $amount;
+      if ($status === self::STATUS_HOLD) $pending += $amount;
+    }
+
+    // Payouts
+    $pending_payout = 0.0; $paid_payout = 0.0;
+    $pq = new WP_Query([
+      'post_type' => self::CPT_PAYOUT,
+      'post_status' => 'publish',
+      'posts_per_page' => 200,
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_PAYOUT_USER,
+          'value' => (string)(int)$affiliate_id,
+          'compare' => '=',
+        ]
+      ],
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+    foreach ((array)$pq->posts as $pid){
+      $pstatus = (string)get_post_meta($pid, self::META_PAYOUT_STATUS, true);
+      $pamount = (float)get_post_meta($pid, self::META_PAYOUT_AMOUNT, true);
+      if ($pstatus === 'pending') $pending_payout += $pamount;
+      if ($pstatus === 'paid')    $paid_payout    += $pamount;
+    }
+
+    $available = max(0, $released - $pending_payout - $paid_payout);
+    return [
+      'pending'        => $pending,
+      'released'       => $released,
+      'pending_payout' => $pending_payout,
+      'paid_payout'    => $paid_payout,
+      'available_payout' => $available,
+    ];
+  }
+
+  private function get_affiliate_payouts($affiliate_id, $limit, $date_from = null, $date_to = null){
+    $q = new WP_Query([
+      'post_type' => self::CPT_PAYOUT,
+      'post_status' => 'publish',
+      'posts_per_page' => max(1, (int)$limit),
+      'orderby' => 'date',
+      'order' => 'DESC',
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_PAYOUT_USER,
+          'value' => (string)(int)$affiliate_id,
+          'compare' => '=',
+        ]
+      ],
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+    $out = [];
+    foreach ((array)$q->posts as $pid){
+      $amount = (float)get_post_meta($pid, self::META_PAYOUT_AMOUNT, true);
+      $status = (string)get_post_meta($pid, self::META_PAYOUT_STATUS, true);
+      $req = (int)get_post_meta($pid, self::META_PAYOUT_REQUEST, true);
+      $paid = (int)get_post_meta($pid, self::META_PAYOUT_PAID_AT, true);
+      $status_label = $status ?: 'pending';
+      if ($status === 'paid') $status_label = 'Pago';
+      elseif ($status === 'rejected') $status_label = 'Rejeitado';
+      elseif ($status === 'pending') $status_label = 'Pendente';
+      $out[] = [
+        'id' => (int)$pid,
+        'amount' => $amount,
+        'status' => $status ?: 'pending',
+        'status_label' => $status_label,
+        'requested' => $req ? date_i18n('Y-m-d H:i', $req) : '-',
+        'paid_at' => $paid ? date_i18n('Y-m-d H:i', $paid) : '-',
       ];
     }
     return $out;
@@ -1045,5 +1643,36 @@ class Yoda_Affiliates {
     }
     $total_ok = ((float)$order->get_total()) >= (float)$opts['min_order_total'];
     return $roles_ok && $total_ok;
+  }
+
+  private function notify_admin_payout($user_id, $amount, $status, $payout_id){
+    $opts = self::get_opts();
+    $to = $opts['payout_admin_email'] ?: get_option('admin_email');
+    if (!$to) return;
+    $user = get_user_by('id', $user_id);
+    $name = $user ? ($user->display_name ?: $user->user_login) : ('#'.$user_id);
+    $subject = sprintf('[Yoda] Payout afiliado %s (#%d)', $status, $payout_id);
+    $body = sprintf(
+      "Status: %s\nAfiliado: %s (ID %d)\nValor: %s\nPayout ID: %d\n",
+      $status,
+      $name,
+      $user_id,
+      wc_price($amount),
+      $payout_id
+    );
+    wp_mail($to, $subject, $body);
+  }
+
+  private function notify_affiliate_payout($user_id, $amount, $status, $payout_id){
+    $user = get_user_by('id', $user_id);
+    if (!$user || !is_email($user->user_email)) return;
+    $subject = sprintf('[Yoda] Seu saque está %s (ID %d)', $status, $payout_id);
+    $body = sprintf(
+      "Status: %s\nValor: %s\nPayout ID: %d\n",
+      $status,
+      wc_price($amount),
+      $payout_id
+    );
+    wp_mail($user->user_email, $subject, $body);
   }
 }

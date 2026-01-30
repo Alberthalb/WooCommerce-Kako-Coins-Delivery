@@ -56,15 +56,43 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - Configure em **Yoda → Cashback**.
 - Regra padrão: **1,2%** de cashback em moedas sobre o total de moedas entregue no pedido (ex.: 1.000.000 → 12.000).
 - Cashback é creditado quando a entrega na Kako fica `delivered` e é lançado no extrato (`yoda_cashback_txn`).
-- Resgate mínimo padrão: **5.000 moedas** (configurável).
+- Base de cálculo = moedas efetivamente entregues (armazenadas em `_yoda_coins_delivered`).
+- Resgate mínimo padrão: **5.000 moedas** (configurável, mínimo absoluto 5.000).
 - Resgate faz um `transout` para o KakoID informado (pré-preenche com o último KakoID usado nas compras do cliente).
 - Se o pedido for cancelado/reembolsado (`refunded/cancelled/failed`), o cashback daquele pedido é estornado.
+- Chargeback/refund/cancelled também estornam movimentações pendentes/pagas associadas e retiram saldo.
+- E-mails: cliente recebe quando cashback é creditado, quando solicita resgate e quando o resgate é pago.
+- Sorteios: campanhas abertas podem gerar tickets automaticamente por pedido entregue ou a cada X moedas; entradas ficam em CPT `yoda_raffle_entry` e são logadas no Ledger como `raffle_ticket`.
+- Regras rígidas: sem duplicar ticket por pedido e respeitando limite por usuário (lock por pedido + checagem de limite).
+- Sorteio: ao sortear (ou encerrar e sortear) registra admin, horário, winner entry, trava campanha (`drawn`) e loga no Ledger (`raffle_draw`).
+- Prêmio: transout automático para o vencedor (usando KakoID salvo), grava recibo/orderRef e log `raffle_prize` no Ledger.
+- Resgates ficam **pendentes**: admin aprova/recusa/força processamento na tela **Yoda → Cashback (Relatórios)** com motivo; pendente debita saldo, recusa estorna, aprovação dispara o envio.
 
 ## Sistema de Sorteios
 - Módulo inicial (regras ainda não definidas): cria **Sorteios** e **Inscrições** via CPTs.
 - Admin: crie um post em **Yoda → Sorteios**, marque meta `_yoda_status=open` para abrir (e opcionalmente `_yoda_start_at` / `_yoda_end_at` como timestamps).
 - Cliente: **Minha Conta → Sorteios** ou shortcode `[yoda_raffles]` para ver sorteios abertos e participar.
 - Limite por usuário: meta `_yoda_max_entries_per_user` (padrão 1).
+
+## Como configurar (admin)
+1. **Credenciais Kako**: em **Yoda → Config**, informe App ID/Key e ambiente (sandbox/production). Opcional: defina constantes no `wp-config.php`.
+2. **Afiliados**: em **Yoda → Revendedores**, ative, defina percentual padrão, dias de liberação, parâmetro `ref` e duração do cookie. Opcional: permitir/ bloquear autoindicação e mínimo de pedido.
+3. **Cashback**: em **Yoda → Cashback**, ative, defina % (padrão 1,2%), arredondamento e resgate mínimo (mínimo absoluto 5.000). Ajuste elegibilidade (roles) e compra mínima em moedas.
+4. **Sorteios**: em **Yoda → Sorteios**, crie a campanha, defina status (draft/open/closed/drawn), datas e limite por usuário. Use “Sortear vencedor” ou “Encerrar e sortear”.
+5. **Ledger**: use **Yoda → Ledger** para consultas rápidas e export CSV.
+
+## Como usar (afiliado/cliente)
+- **Afiliado (Revendedor)**: menu **Minha Conta → Revendedor** ou shortcode `[yoda_affiliate_portal]`. Lá vê link de indicação (`/?ref=CODIGO`), KPIs, pedidos indicados, comissões, solicita saque e acompanha status.
+- **Cliente (Cashback)**: menu **Minha Conta → Carteira/Cashback** ou `[yoda_cashback_portal]`. Consulta saldo, solicita resgate (≥ 5.000 moedas), acompanha extrato e alertas de crédito/resgate.
+- **Sorteios (Cliente)**: menu **Minha Conta → Sorteios** ou `[yoda_raffles]`. Lista campanhas abertas e permite inscrever-se respeitando o limite por usuário.
+
+## FAQ (rápido)
+- **Quando o cashback é creditado?** Ao `_yoda_delivery_status = delivered` com base nas moedas efetivamente entregues (`_yoda_coins_delivered`).
+- **Chargeback/refund cancela cashback?** Sim. Movimentação vira `reversed` e o saldo é debitado.
+- **Resgate mínimo?** 5.000 moedas (mínimo absoluto, configurável para cima).
+- **Quem pode ver o portal do afiliado?** Role `yoda_affiliate` e administradores para suporte.
+- **Como exportar dados?** Use os botões “Exportar CSV” em Comissões (Afiliados), Cashback (Relatórios) e Ledger.
+- **Posso forçar pagamento de resgate?** Sim, no admin de Cashback: botão “Processar” ou “Forçar processamento”; recusar devolve saldo e registra motivo.
 
 ## Logs (opcional)
 - Habilite com `define('YODA_LOGS', true);` em wp-config.php.
@@ -90,6 +118,7 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
   - Cashback: % cashback, arredondamento, resgate mínimo, roles elegíveis, compra mínima (moedas).
 - Ledger: `includes/class-yoda-ledger.php` cria tabela `wp_yoda_ledger` para lançamentos de afiliado/cashback/sorteios.
   - Tela de consulta rápida em **Yoda → Ledger** (`class-yoda-ledger-admin.php`) com filtros simples.
+- Saque de afiliado (manual): portal solicita payout (status `pending`), admin marca `paid` ou `rejected`; registros em `yoda_aff_payout` e no Ledger.
 
 ## Boas praticas de segredos
 - Nunca commitar chaves ou `.env`. Valores efetivos devem vir do ambiente ou wp-config.php.
@@ -99,3 +128,5 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - Adicionar limitacao/rate-limit em chamadas publicas de userinfo (AJAX/shortcode).
 - Corrigir lookup de webhook MP para aceitar external_reference nao numerico.
 - Completar funcoes ausentes em `Yoda_Packs` (cache_key, retry_verify_bg) se forem usadas.
+## Notas recentes
+- Menu "Carteira/Cashback" aparece na Minha Conta (endpoint `yoda-cashback`) e carrega o portal de saldo/resgate/extrato.

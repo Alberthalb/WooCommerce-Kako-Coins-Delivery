@@ -31,7 +31,9 @@ class Yoda_Ledger {
       KEY type_idx (type),
       KEY ref_idx (ref_id),
       KEY user_idx (user_id),
-      KEY status_idx (status)
+      KEY status_idx (status),
+      KEY type_status_created_idx (type, status, created_at),
+      KEY ref_user_idx (ref_id, user_id)
     ) $charset;";
     require_once ABSPATH.'wp-admin/includes/upgrade.php';
     dbDelta($sql);
@@ -40,7 +42,7 @@ class Yoda_Ledger {
   public static function log($type, $ref_id, $user_id, $amount, $status, array $meta = []){
     global $wpdb;
     $table = self::table_name();
-    $wpdb->insert($table, [
+    $row = [
       'created_at' => current_time('mysql'),
       'type'       => substr((string)$type, 0, 32),
       'ref_id'     => (int)$ref_id,
@@ -48,9 +50,26 @@ class Yoda_Ledger {
       'amount'     => (float)$amount,
       'status'     => substr((string)$status, 0, 32),
       'meta'       => $meta ? wp_json_encode($meta) : null,
-    ], [
+    ];
+    $wpdb->insert($table, $row, [
       '%s','%s','%d','%d','%f','%s','%s'
     ]);
+
+    // Audit trail via Yoda_Logger, se disponível
+    if (class_exists('Yoda_Logger')) {
+      try {
+        Yoda_Logger::log('ledger', [
+          'type'    => $row['type'],
+          'ref_id'  => $row['ref_id'],
+          'user_id' => $row['user_id'],
+          'amount'  => $row['amount'],
+          'status'  => $row['status'],
+          'meta'    => $meta,
+        ]);
+      } catch (\Throwable $e) {
+        // falha de log não pode quebrar fluxo
+      }
+    }
   }
 
   private static function table_name(){

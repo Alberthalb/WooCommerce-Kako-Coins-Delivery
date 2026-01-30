@@ -8,6 +8,7 @@ class Yoda_Fulfillment {
   const META_HOLD_UNTIL  = '_yoda_hold_until';       // timestamp para segurar entrega
   const META_AUTOCOMPLETE_OK = '_yoda_autocomplete_ok'; // marcado quando a entrega foi confirmada por este plugin
   const META_IDEMPOTENCY_NOTED = '_yoda_idempotency_noted';
+  const META_COINS_DELIVERED = '_yoda_coins_delivered';
 
   private function skip_fulfill_transient_key($order_id){
     return 'yoda_skip_fulfill_'.$order_id;
@@ -199,6 +200,13 @@ class Yoda_Fulfillment {
     if (is_wp_error($to)){
       $order->add_order_note('Yoda Kako: transout erro HTTP — '.$to->get_error_message());
       update_post_meta($order->get_id(), self::META_DELIV_STAT, 'failed');
+      if (class_exists('Yoda_Ledger')){
+        $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+        Yoda_Ledger::log('delivery', $order->get_id(), (int)$order->get_customer_id(), $coins, Yoda_Ledger::STATUS_BLOCKED, [
+          'order_ref' => $orderRef,
+          'reason' => $to->get_error_message(),
+        ]);
+      }
       return;
     }
 
@@ -210,6 +218,7 @@ class Yoda_Fulfillment {
     if ($code === 0 && (int)$status === 2){
       update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
       update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
+      update_post_meta($order->get_id(), self::META_COINS_DELIVERED, (int)$amount);
       do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
       if (class_exists('Yoda_Ledger')){
         $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
@@ -235,6 +244,7 @@ class Yoda_Fulfillment {
       if ((int)$qrStatus === 2){
         update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
         update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
+        update_post_meta($order->get_id(), self::META_COINS_DELIVERED, (int)$amount);
         do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
         if (class_exists('Yoda_Ledger')){
           $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
@@ -269,6 +279,15 @@ class Yoda_Fulfillment {
     // fallback
     update_post_meta($order->get_id(), self::META_DELIV_STAT, 'failed');
     $order->add_order_note("Yoda Kako: falha transout. code={$code} msg={$msg} status={$status}");
+    if (class_exists('Yoda_Ledger')){
+      $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+      Yoda_Ledger::log('delivery', $order->get_id(), (int)$order->get_customer_id(), $coins, Yoda_Ledger::STATUS_BLOCKED, [
+        'order_ref' => $orderRef,
+        'code' => $code,
+        'status' => $status,
+        'msg' => $msg,
+      ]);
+    }
   }
 
   private function get_effective_creds(){
@@ -328,5 +347,11 @@ class Yoda_Fulfillment {
     if (!($order instanceof WC_Order)) return;
     $order->add_order_note('Yoda Kako: pagamento reembolsado/cancelado. Avaliar bloqueio do cliente.');
     update_post_meta($order->get_id(), self::META_DELIV_STAT, 'needs_review');
+    if (class_exists('Yoda_Ledger')){
+      $coins = (int) Yoda_Product_Meta::get_order_coins_amount($order);
+      Yoda_Ledger::log('delivery', $order->get_id(), (int)$order->get_customer_id(), $coins, Yoda_Ledger::STATUS_BLOCKED, [
+        'reason' => 'chargeback_like',
+      ]);
+    }
   }
 }

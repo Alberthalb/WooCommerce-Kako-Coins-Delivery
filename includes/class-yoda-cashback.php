@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 if (!defined('ABSPATH')) exit;
 
 class Yoda_Cashback {
@@ -17,10 +17,16 @@ class Yoda_Cashback {
   const META_TXN_RATE = '_yoda_rate';
   const META_TXN_AMOUNT = '_yoda_amount'; // coins
   const META_TXN_REASON = '_yoda_reason';
+  const META_TXN_LAST_ADMIN = '_yoda_last_admin';
+  const META_TXN_AUDIT = '_yoda_audit';
   const META_TXN_CREATED_AT = '_yoda_created_at';
   const META_TXN_DONE_AT = '_yoda_done_at';
+  const META_TXN_KAKOID = '_yoda_kakoid';
+  const META_LAST_VISIT = 'yoda_cashback_last_visit';
 
   const META_LAST_KAKO_ID = 'yoda_kako_id_last';
+
+  const MIN_REDEEM_ABS = 5000;
 
   const NONCE_REDEEM = 'yoda_cashback_redeem';
 
@@ -33,6 +39,8 @@ class Yoda_Cashback {
       add_action('admin_init', [$this,'register_settings']);
       add_action('admin_post_yoda_cashback_reverse', [$this,'handle_reverse']);
       add_action('admin_post_yoda_cashback_mark_redeemed', [$this,'handle_mark_redeemed']);
+      add_action('admin_post_yoda_cashback_process', [$this,'handle_process_redeem']);
+      add_action('admin_post_yoda_cashback_reject', [$this,'handle_reject_redeem']);
     }
 
     // Eventos de entrega Kako (emitidos pela classe Yoda_Fulfillment)
@@ -65,7 +73,7 @@ class Yoda_Cashback {
     $defaults = [
       'enabled' => 1,
       'rate' => 1.2, // %
-      'min_redeem' => 5000, // coins
+      'min_redeem' => self::MIN_REDEEM_ABS, // coins
       'rounding' => 'floor', // floor|round
       'award_on' => 'delivered', // delivered
       'allow_guest' => 0,
@@ -77,7 +85,7 @@ class Yoda_Cashback {
     $o = array_merge($defaults, $o);
     $o['enabled'] = (int)!!$o['enabled'];
     $o['rate'] = (float)$o['rate'];
-    $o['min_redeem'] = max(0, (int)$o['min_redeem']);
+    $o['min_redeem'] = max(self::MIN_REDEEM_ABS, (int)$o['min_redeem']);
     $o['rounding'] = in_array($o['rounding'], ['floor','round'], true) ? $o['rounding'] : 'floor';
     $o['award_on'] = 'delivered';
     $o['allow_guest'] = (int)!!$o['allow_guest'];
@@ -144,7 +152,7 @@ class Yoda_Cashback {
         $out = [];
         $out['enabled'] = !empty($opts['enabled']) ? 1 : 0;
         $out['rate'] = (float)($opts['rate'] ?? 1.2);
-        $out['min_redeem'] = max(0, (int)($opts['min_redeem'] ?? 5000));
+        $out['min_redeem'] = max(self::MIN_REDEEM_ABS, (int)($opts['min_redeem'] ?? self::MIN_REDEEM_ABS));
         $rounding = (string)($opts['rounding'] ?? 'floor');
         $out['rounding'] = in_array($rounding, ['floor','round'], true) ? $rounding : 'floor';
         $out['eligible_roles'] = trim((string)($opts['eligible_roles'] ?? 'customer'));
@@ -176,7 +184,10 @@ class Yoda_Cashback {
           </tr>
           <tr>
             <th scope="row"><label>Resgate mínimo (moedas)</label></th>
-            <td><input type="number" min="0" name="<?php echo esc_attr(self::OPT_KEY); ?>[min_redeem]" value="<?php echo esc_attr((int)$o['min_redeem']); ?>"></td>
+                        <td>
+              <input type="number" min="<?php echo esc_attr(self::MIN_REDEEM_ABS); ?>" name="<?php echo esc_attr(self::OPT_KEY); ?>[min_redeem]" value="<?php echo esc_attr((int)$o['min_redeem']); ?>">
+              <p class="description">Mínimo absoluto: <?php echo esc_html(number_format_i18n(self::MIN_REDEEM_ABS)); ?> moedas.</p>
+            </td>
           </tr>
           <tr>
             <th scope="row"><label>Arredondamento</label></th>
@@ -214,6 +225,7 @@ class Yoda_Cashback {
     $user_id = isset($_GET['user']) ? (int)$_GET['user'] : 0;
     $date_from = isset($_GET['from']) ? sanitize_text_field(wp_unslash($_GET['from'])) : '';
     $date_to   = isset($_GET['to'])   ? sanitize_text_field(wp_unslash($_GET['to']))   : '';
+    $export = isset($_GET['export']) && $_GET['export'] === 'csv';
 
     $meta_query = [];
     if ($status){
@@ -234,12 +246,34 @@ class Yoda_Cashback {
     $q = new WP_Query([
       'post_type' => self::CPT_TXN,
       'post_status' => 'publish',
-      'posts_per_page' => 50,
+      'posts_per_page' => $export ? 500 : 50,
       'orderby' => 'date',
       'order' => 'DESC',
       'meta_query' => $meta_query ?: null,
       'date_query' => $this->build_date_query($date_from, $date_to),
     ]);
+
+    if ($export){
+      header('Content-Type: text/csv; charset=utf-8');
+      header('Content-Disposition: attachment; filename=cashback.csv');
+      $out = fopen('php://output', 'w');
+      fputcsv($out, ['ID','Usuario','Pedido','Tipo','Status','Valor','Data','OrderRef','Motivo/KakoID']);
+      foreach ((array)$q->posts as $p){
+        $tid = $p->ID;
+        $uid = (int)get_post_meta($tid, self::META_TXN_USER_ID, true);
+        $order_id = (int)get_post_meta($tid, self::META_TXN_ORDER_ID, true);
+        $type = (string)get_post_meta($tid, self::META_TXN_TYPE, true);
+        $status_row = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+        $amount = (int)get_post_meta($tid, self::META_TXN_AMOUNT, true);
+        $created = (int)get_post_meta($tid, self::META_TXN_CREATED_AT, true);
+        $created_txt = $created ? date_i18n('Y-m-d', $created) : '';
+        $order_ref = get_post_meta($order_id, Yoda_Fulfillment::META_ORDER_REF, true);
+        $reason = get_post_meta($tid, self::META_TXN_REASON, true);
+        $kakoid = get_post_meta($tid, self::META_TXN_KAKOID, true);
+        fputcsv($out, [$tid,$uid,$order_id,$type,$status_row,$amount,$created_txt,$order_ref,$reason ?: $kakoid]);
+      }
+      exit;
+    }
 
     ?>
     <div class="wrap">
@@ -251,7 +285,8 @@ class Yoda_Cashback {
             <option value="">(todos)</option>
             <option value="earned" <?php selected($status, 'earned'); ?>>Creditado</option>
             <option value="pending" <?php selected($status, 'pending'); ?>>Pendente</option>
-            <option value="redeemed" <?php selected($status, 'redeemed'); ?>>Resgatado</option>
+             <option value="redeemed" <?php selected($status, 'redeemed'); ?>>Resgatado</option>
+             <option value="paid" <?php selected($status, 'paid'); ?>>Pago</option>
             <option value="reversed" <?php selected($status, 'reversed'); ?>>Estornado</option>
             <option value="failed" <?php selected($status, 'failed'); ?>>Falhou</option>
           </select>
@@ -266,6 +301,7 @@ class Yoda_Cashback {
           <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
         </label>
         <button class="button">Filtrar</button>
+        <a class="button button-primary" href="<?php echo esc_url(add_query_arg('export','csv')); ?>">Exportar CSV</a>
       </form>
 
       <table class="widefat striped">
@@ -278,12 +314,13 @@ class Yoda_Cashback {
             <th>Valor</th>
             <th>Status</th>
             <th>Data</th>
+            <th>Motivo</th>
             <th>Ações</th>
           </tr>
         </thead>
         <tbody>
         <?php if (empty($q->posts)): ?>
-          <tr><td colspan="8">Nenhuma movimentação encontrada.</td></tr>
+          <tr><td colspan="9">Nenhuma movimentação encontrada.</td></tr>
         <?php else: ?>
           <?php foreach ($q->posts as $p): ?>
             <?php
@@ -298,9 +335,12 @@ class Yoda_Cashback {
               $status_label = $status_row;
               if ($status_row === 'earned') $status_label = 'Creditado';
               if ($status_row === 'pending') $status_label = 'Pendente';
-              if ($status_row === 'redeemed') $status_label = 'Resgatado';
+      if ($status_row === 'redeemed') $status_label = 'Resgatado';
+      if ($status_row === 'paid') $status_label = 'Pago';
               if ($status_row === 'reversed') $status_label = 'Estornado';
               if ($status_row === 'failed') $status_label = 'Falhou';
+              $reason = (string)get_post_meta($tid, self::META_TXN_REASON, true);
+              $kakoid = (string)get_post_meta($tid, self::META_TXN_KAKOID, true);
               $reverse_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_cashback_reverse&tid='.$tid), 'yoda_cashback_reverse_'.$tid);
               $mark_url    = wp_nonce_url(admin_url('admin-post.php?action=yoda_cashback_mark_redeemed&tid='.$tid), 'yoda_cashback_mark_'.$tid);
             ?>
@@ -312,12 +352,30 @@ class Yoda_Cashback {
               <td><?php echo esc_html(number_format_i18n($amount)); ?></td>
               <td><?php echo esc_html($status_label); ?></td>
               <td><?php echo $created ? esc_html(date_i18n('Y-m-d', $created)) : '-'; ?></td>
+              <td><?php echo $reason ? esc_html($reason) : esc_html($kakoid); ?></td>
               <td>
                 <?php if ($status_row !== 'reversed' && $status_row !== 'redeemed'): ?>
                   <a class="button button-secondary" href="<?php echo esc_url($reverse_url); ?>">Estornar</a>
                 <?php endif; ?>
-                <?php if ($status_row === 'pending'): ?>
-                  <a class="button" href="<?php echo esc_url($mark_url); ?>">Marcar resgatado</a>
+                <?php if (in_array($status_row, ['pending','failed'], true)): ?>
+                  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline;margin-right:4px;">
+                    <?php wp_nonce_field('yoda_cashback_process_'.$tid); ?>
+                    <input type="hidden" name="action" value="yoda_cashback_process">
+                    <input type="hidden" name="tid" value="<?php echo esc_attr($tid); ?>">
+                    <?php if ($status_row === 'failed'): ?>
+                      <input type="hidden" name="force" value="1">
+                      <button class="button button-primary">Forçar processamento</button>
+                    <?php else: ?>
+                      <button class="button button-primary">Processar</button>
+                    <?php endif; ?>
+                  </form>
+                  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="display:inline;">
+                    <?php wp_nonce_field('yoda_cashback_reject_'.$tid); ?>
+                    <input type="hidden" name="action" value="yoda_cashback_reject">
+                    <input type="hidden" name="tid" value="<?php echo esc_attr($tid); ?>">
+                    <input type="text" name="reason" placeholder="Motivo" style="width:140px;">
+                    <button class="button">Recusar</button>
+                  </form>
                 <?php endif; ?>
               </td>
             </tr>
@@ -360,8 +418,111 @@ class Yoda_Cashback {
     if (!$tid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_cashback_mark_'.$tid)) wp_die('Nonce inválido');
     $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
     if ($status === 'pending'){
-      update_post_meta($tid, self::META_TXN_STATUS, 'redeemed');
+      update_post_meta($tid, self::META_TXN_STATUS, 'paid');
       update_post_meta($tid, self::META_TXN_DONE_AT, time());
+    }
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+    exit;
+  }
+
+  public function handle_process_redeem(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $tid = isset($_POST['tid']) ? (int)$_POST['tid'] : 0;
+    $force = !empty($_POST['force']);
+    if (!$tid || !wp_verify_nonce($_POST['_wpnonce'] ?? '', 'yoda_cashback_process_'.$tid)) wp_die('Nonce inválido');
+
+    $type = (string)get_post_meta($tid, self::META_TXN_TYPE, true);
+    if ($type !== 'redeem') wp_die('Tipo inválido');
+
+    $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+    if (in_array($status, ['redeemed','reversed'], true)) wp_die('Já finalizado');
+
+    $user_id = (int)get_post_meta($tid, self::META_TXN_USER_ID, true);
+    $amount  = abs((int)get_post_meta($tid, self::META_TXN_AMOUNT, true));
+    $kakoId  = (string)get_post_meta($tid, self::META_TXN_KAKOID, true);
+    if (!$kakoId){
+      $kakoId = (string)get_user_meta($user_id, self::META_LAST_KAKO_ID, true);
+    }
+    if (!$kakoId) wp_die('KakoID ausente para processar.');
+
+    $balance = $this->get_balance($user_id);
+    if ($status === 'failed'){
+      if ($balance < $amount){
+        wp_die('Saldo insuficiente para reprocessar o resgate.');
+      }
+      $this->add_balance($user_id, -$amount); // reter novamente para reprocessar
+    }
+
+    $res = $this->send_kako_cashback($kakoId, $amount, 'cashback-'.$user_id.'-'.$tid);
+    if ($res['ok']){
+      $now = time();
+      update_post_meta($tid, self::META_TXN_STATUS, 'paid');
+      update_post_meta($tid, self::META_TXN_DONE_AT, $now);
+      update_post_meta($tid, self::META_TXN_REASON, 'Processado manualmente');
+      update_post_meta($tid, self::META_TXN_LAST_ADMIN, (int)get_current_user_id());
+      add_post_meta($tid, self::META_TXN_AUDIT, sprintf('%s | paid | admin #%d', date('c', $now), (int)get_current_user_id()));
+      update_user_meta($user_id, self::META_LAST_KAKO_ID, $kakoId);
+      if (class_exists('Yoda_Ledger')){
+        Yoda_Ledger::log('cashback', 0, $user_id, -$amount, Yoda_Ledger::STATUS_PAID, [
+          'txn_id' => $tid,
+          'kakoid' => $kakoId,
+          'by' => get_current_user_id(),
+        ]);
+      }
+      $this->maybe_send_email(
+        $user_id,
+        'Resgate de cashback pago',
+        sprintf('Seu resgate de %s moedas foi pago para o KakoID %s.', number_format_i18n($amount), esc_html($kakoId))
+      );
+      wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+      exit;
+    }
+
+    // falha: devolve o saldo e marca motivo
+    $this->add_balance($user_id, $amount);
+    update_post_meta($tid, self::META_TXN_STATUS, 'failed');
+    update_post_meta($tid, self::META_TXN_REASON, (string)$res['msg']);
+    update_post_meta($tid, self::META_TXN_DONE_AT, time());
+    update_post_meta($tid, self::META_TXN_LAST_ADMIN, (int)get_current_user_id());
+    add_post_meta($tid, self::META_TXN_AUDIT, sprintf('%s | failed | admin #%d | %s', date('c'), (int)get_current_user_id(), (string)$res['msg']));
+    if (class_exists('Yoda_Ledger')){
+      Yoda_Ledger::log('cashback', 0, $user_id, 0, Yoda_Ledger::STATUS_BLOCKED, [
+        'txn_id' => $tid,
+        'reason' => $res['msg'],
+      ]);
+    }
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+    exit;
+  }
+
+  public function handle_reject_redeem(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $tid = isset($_POST['tid']) ? (int)$_POST['tid'] : 0;
+    $reason = isset($_POST['reason']) ? sanitize_text_field(wp_unslash($_POST['reason'])) : '';
+    if (!$tid || !wp_verify_nonce($_POST['_wpnonce'] ?? '', 'yoda_cashback_reject_'.$tid)) wp_die('Nonce inválido');
+    $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+    if (in_array($status, ['reversed','redeemed'], true)) wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+
+    $user_id = (int)get_post_meta($tid, self::META_TXN_USER_ID, true);
+    $amount  = abs((int)get_post_meta($tid, self::META_TXN_AMOUNT, true));
+
+    if ($status === 'pending' && $amount > 0 && $user_id){
+      $this->add_balance($user_id, $amount); // devolve saldo
+    }
+
+    update_post_meta($tid, self::META_TXN_STATUS, 'reversed');
+    update_post_meta($tid, self::META_TXN_REASON, $reason ?: 'Rejeitado pelo admin');
+    $now = time();
+    update_post_meta($tid, self::META_TXN_DONE_AT, $now);
+    update_post_meta($tid, self::META_TXN_LAST_ADMIN, (int)get_current_user_id());
+    add_post_meta($tid, self::META_TXN_AUDIT, sprintf('%s | reversed | admin #%d | %s', date('c', $now), (int)get_current_user_id(), $reason ?: 'rejected'));
+    if (class_exists('Yoda_Ledger')){
+      $ledger_amount = ($status === 'pending') ? 0 : -$amount;
+      Yoda_Ledger::log('cashback', 0, $user_id, $ledger_amount, Yoda_Ledger::STATUS_REVERSED, [
+        'txn_id' => $tid,
+        'reason' => $reason ?: 'rejected',
+        'by' => get_current_user_id(),
+      ]);
     }
     wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
     exit;
@@ -384,7 +545,9 @@ class Yoda_Cashback {
       return;
     }
 
-    $base = (int)$coins_amount;
+    // Preferir moedas efetivamente entregues (META_COINS_DELIVERED); fallback para cálculo original
+    $delivered_meta = (int)get_post_meta($order->get_id(), Yoda_Fulfillment::META_COINS_DELIVERED, true);
+    $base = $delivered_meta > 0 ? $delivered_meta : (int)$coins_amount;
     if ($base <= 0) return;
 
     // idempotência por pedido
@@ -417,6 +580,11 @@ class Yoda_Cashback {
 
     $this->add_balance($user_id, $amount);
     $order->add_order_note(sprintf('Cashback: %d moedas (%.2f%%) creditadas no saldo do cliente.', $amount, $rate));
+    $this->maybe_send_email(
+      $user_id,
+      sprintf('Cashback disponível: %s moedas', number_format_i18n($amount)),
+      sprintf('Você recebeu %s moedas de cashback no pedido #%d. Seu saldo foi atualizado.', number_format_i18n($amount), $order->get_id())
+    );
     if (class_exists('Yoda_Ledger')){
       Yoda_Ledger::log('cashback', $order->get_id(), $user_id, $amount, Yoda_Ledger::STATUS_AVAILABLE, [
         'txn_id' => $txn_id,
@@ -433,7 +601,8 @@ class Yoda_Cashback {
 
     $order = wc_get_order((int)$object_id);
     if (!$order) return;
-    $amount = (int)Yoda_Product_Meta::get_order_coins_amount($order);
+    $delivered_meta = (int)get_post_meta($order->get_id(), Yoda_Fulfillment::META_COINS_DELIVERED, true);
+    $amount = $delivered_meta > 0 ? $delivered_meta : (int)Yoda_Product_Meta::get_order_coins_amount($order);
     $order_ref = (string)get_post_meta($order->get_id(), Yoda_Fulfillment::META_ORDER_REF, true);
     $this->on_kako_delivered($order, $amount, $order_ref);
   }
@@ -466,7 +635,7 @@ class Yoda_Cashback {
     if (!$earn_txn_id) return;
 
     $status = (string)get_post_meta($earn_txn_id, self::META_TXN_STATUS, true);
-    if ($status !== 'earned') return;
+    if (!in_array($status, ['earned','paid','pending'], true)) return;
 
     $user_id = (int)get_post_meta($earn_txn_id, self::META_TXN_USER_ID, true);
     $amount = (int)get_post_meta($earn_txn_id, self::META_TXN_AMOUNT, true);
@@ -475,6 +644,7 @@ class Yoda_Cashback {
     update_post_meta($earn_txn_id, self::META_TXN_REASON, (string)$reason);
     update_post_meta($earn_txn_id, self::META_TXN_DONE_AT, time());
 
+    // Reverte saldo apenas se ainda estava lançado/creditado
     if ($user_id > 0 && $amount !== 0){
       $this->add_balance($user_id, -$amount);
     }
@@ -503,10 +673,10 @@ class Yoda_Cashback {
     foreach ($items as $k => $label){
       $out[$k] = $label;
       if ($k === 'orders'){
-        $out['yoda-cashback'] = 'Cashback';
+        $out['yoda-cashback'] = 'Carteira / Cashback';
       }
     }
-    if (!isset($out['yoda-cashback'])) $out['yoda-cashback'] = 'Cashback';
+    if (!isset($out['yoda-cashback'])) $out['yoda-cashback'] = 'Carteira / Cashback';
     return $out;
   }
 
@@ -521,7 +691,7 @@ class Yoda_Cashback {
   private function render_portal(){
     $opts = self::get_opts();
     if (!$opts['enabled']){
-      return '<div class="woocommerce-info">Cashback desativado.</div>';
+      return '<div class="woocommerce-info">Carteira/Cashback desativada.</div>';
     }
     if (!is_user_logged_in()){
       return '<div class="woocommerce-info">Faça login para acessar seu cashback.</div>';
@@ -530,7 +700,9 @@ class Yoda_Cashback {
     $user_id = get_current_user_id();
     $balance = $this->get_balance($user_id);
     $min = (int)$opts['min_redeem'];
+    $min_effective = max(self::MIN_REDEEM_ABS, $min);
     $last_kako = (string)get_user_meta($user_id, self::META_LAST_KAKO_ID, true);
+    $last_visit = (int)get_user_meta($user_id, self::META_LAST_VISIT, true);
 
     $msg = '';
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['_yoda_cashback_nonce'])){
@@ -539,31 +711,56 @@ class Yoda_Cashback {
     }
 
     $txns = $this->get_user_txns($user_id, 50);
+    $totals = $this->get_user_totals_by_status($user_id);
+    $alerts = $this->get_user_alerts($user_id, $last_visit);
+    $pending  = $totals['pending'] ?? 0;
+    $earned   = $totals['earned'] ?? 0;
+    $redeemed = $totals['redeemed'] ?? 0;
+    $reversed = $totals['reversed'] ?? 0;
 
     ob_start();
     ?>
     <div class="yoda-cashback-portal">
-      <h2>Cashback</h2>
+      <h2>Carteira / Cashback</h2>
 
       <?php if ($msg): ?>
         <div class="woocommerce-info"><?php echo wp_kses_post($msg); ?></div>
       <?php endif; ?>
+      <?php if (!empty($alerts)): ?>
+        <?php foreach ($alerts as $alert): ?>
+          <div class="<?php echo esc_attr($alert['class']); ?>"><?php echo wp_kses_post($alert['text']); ?></div>
+        <?php endforeach; ?>
+      <?php endif; ?>
 
-      <div style="margin:12px 0;padding:12px;border:1px solid #ddd;border-radius:8px;">
-        <div style="opacity:.7;">Saldo disponível</div>
-        <div style="font-size:22px;font-weight:800;"><?php echo esc_html(number_format_i18n($balance)); ?> moedas</div>
-        <div style="opacity:.7;margin-top:6px;">Resgate mínimo: <?php echo esc_html(number_format_i18n($min)); ?> moedas</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin:12px 0;">
+        <div style="flex:1 1 220px;padding:12px;border:1px solid #ddd;border-radius:8px;background:#f9fafb;">
+          <div style="opacity:.7;">Saldo disponível</div>
+          <div style="font-size:22px;font-weight:800;"><?php echo esc_html(number_format_i18n($balance)); ?> moedas</div>
+          <div style="opacity:.7;margin-top:6px;">Resgate mínimo: <?php echo esc_html(number_format_i18n($min_effective)); ?> moedas</div>
+        </div>
+        <div style="flex:1 1 180px;padding:12px;border:1px solid #ddd;border-radius:8px;">
+          <div style="opacity:.7;">Pendente</div>
+          <div style="font-size:18px;font-weight:700;"><?php echo esc_html(number_format_i18n($pending)); ?> moedas</div>
+        </div>
+        <div style="flex:1 1 180px;padding:12px;border:1px solid #ddd;border-radius:8px;">
+          <div style="opacity:.7;">Pago</div>
+          <div style="font-size:18px;font-weight:700;"><?php echo esc_html(number_format_i18n($redeemed)); ?> moedas</div>
+        </div>
+        <div style="flex:1 1 180px;padding:12px;border:1px solid #ddd;border-radius:8px;">
+          <div style="opacity:.7;">Estornado</div>
+          <div style="font-size:18px;font-weight:700;"><?php echo esc_html(number_format_i18n($reversed)); ?> moedas</div>
+        </div>
       </div>
 
       <h3>Resgatar</h3>
-      <?php if ($balance < $min): ?>
+      <?php if ($balance < $min_effective): ?>
         <div class="woocommerce-info">Você ainda não atingiu o mínimo para resgate.</div>
       <?php else: ?>
         <form method="post" style="max-width:520px;margin:12px 0;">
           <?php echo wp_nonce_field(self::NONCE_REDEEM, '_yoda_cashback_nonce', true, false); ?>
           <p>
             <label>Quantidade (moedas)</label><br>
-            <input type="number" name="amount" class="input-text" min="<?php echo esc_attr($min); ?>" max="<?php echo esc_attr($balance); ?>" step="1" required>
+            <input type="number" name="amount" class="input-text" min="<?php echo esc_attr($min_effective); ?>" max="<?php echo esc_attr($balance); ?>" step="1" required>
           </p>
           <p>
             <label>ID/username do Kako (para receber)</label><br>
@@ -599,7 +796,9 @@ class Yoda_Cashback {
       <?php endif; ?>
     </div>
     <?php
-    return ob_get_clean();
+    $html = ob_get_clean();
+    update_user_meta($user_id, self::META_LAST_VISIT, time());
+    return $html;
   }
 
   private function handle_redeem_post($user_id, $balance, $last_kako, $opts){
@@ -607,7 +806,7 @@ class Yoda_Cashback {
       return 'Não foi possível validar o envio (nonce inválido).';
     }
 
-    $min = (int)$opts['min_redeem'];
+    $min = max(self::MIN_REDEEM_ABS, (int)$opts['min_redeem']);
     $amount = isset($_POST['amount']) ? (int)$_POST['amount'] : 0;
     $kakoId = sanitize_text_field(wp_unslash($_POST['kakoid'] ?? ''));
     $kakoId = trim($kakoId);
@@ -632,39 +831,21 @@ class Yoda_Cashback {
       'base_coins' => 0,
       'rate' => 0,
       'amount' => -$amount,
-      'reason' => '',
+      'reason' => 'Aguardando aprovação',
     ]);
     if (!$txn_id) return 'Não foi possível criar o resgate.';
+    update_post_meta($txn_id, self::META_TXN_KAKOID, $kakoId);
 
     // Debita imediatamente para evitar duplo clique; se falhar, devolve.
     $this->add_balance($user_id, -$amount);
 
-    $res = $this->send_kako_cashback($kakoId, $amount, 'cashback-'.$user_id.'-'.$txn_id);
-    if ($res['ok']){
-      update_post_meta($txn_id, self::META_TXN_STATUS, 'redeemed');
-      update_post_meta($txn_id, self::META_TXN_DONE_AT, time());
-      update_user_meta($user_id, self::META_LAST_KAKO_ID, $kakoId);
-      if (class_exists('Yoda_Ledger')){
-        Yoda_Ledger::log('cashback', 0, $user_id, -$amount, Yoda_Ledger::STATUS_PAID, [
-          'txn_id' => $txn_id,
-          'kakoid' => $kakoId,
-        ]);
-      }
-      return 'Resgate realizado com sucesso.';
-    }
+    $this->maybe_send_email(
+      $user_id,
+      'Pedido de resgate recebido',
+      sprintf('Recebemos sua solicitação de resgate de %s moedas. Assim que aprovado, enviaremos para o KakoID %s.', number_format_i18n($amount), esc_html($kakoId))
+    );
 
-    // Falhou: devolve saldo e marca
-    $this->add_balance($user_id, $amount);
-    update_post_meta($txn_id, self::META_TXN_STATUS, 'failed');
-    update_post_meta($txn_id, self::META_TXN_REASON, (string)$res['msg']);
-    update_post_meta($txn_id, self::META_TXN_DONE_AT, time());
-    if (class_exists('Yoda_Ledger')){
-      Yoda_Ledger::log('cashback', 0, $user_id, 0, Yoda_Ledger::STATUS_BLOCKED, [
-        'txn_id' => $txn_id,
-        'reason' => $res['msg'],
-      ]);
-    }
-    return 'Falha ao resgatar: '.$res['msg'];
+    return 'Pedido de resgate registrado e aguardando aprovação do administrador.';
   }
 
   private function send_kako_cashback($kakoId, $amount, $orderId){
@@ -702,6 +883,13 @@ class Yoda_Cashback {
       }
     }
     return [$appId,$appKey,$base];
+  }
+
+  private function maybe_send_email($user_id, $subject, $message){
+    $user = get_user_by('id', $user_id);
+    if (!$user || !is_email($user->user_email)) return;
+    $headers = ['Content-Type: text/html; charset=UTF-8'];
+    wp_mail($user->user_email, $subject, wpautop($message), $headers);
   }
 
   /* ========================================================================
@@ -806,6 +994,7 @@ class Yoda_Cashback {
       if ($status === 'pending') $status_label = 'Pendente';
       if ($status === 'reversed') $status_label = 'Estornado';
       if ($status === 'redeemed') $status_label = 'Resgatado';
+      if ($status === 'paid') $status_label = 'Pago';
       if ($status === 'failed') $status_label = 'Falhou';
 
       $out[] = [
@@ -819,6 +1008,132 @@ class Yoda_Cashback {
       ];
     }
     return $out;
+  }
+
+  private function get_user_totals_by_status($user_id){
+    $q = new WP_Query([
+      'post_type' => self::CPT_TXN,
+      'post_status' => 'publish',
+      'posts_per_page' => -1,
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_TXN_USER_ID,
+          'value' => (string)(int)$user_id,
+          'compare' => '=',
+        ],
+      ],
+    ]);
+    $tot = [
+      'earned' => 0,
+      'pending' => 0,
+      'redeemed' => 0,
+      'reversed' => 0,
+    ];
+    foreach ((array)$q->posts as $id){
+      $status = (string)get_post_meta($id, self::META_TXN_STATUS, true);
+      $amount = (int)get_post_meta($id, self::META_TXN_AMOUNT, true);
+      switch ($status){
+        case 'earned':
+          $tot['earned'] += max(0, $amount);
+          break;
+        case 'pending':
+          $tot['pending'] += abs($amount);
+          break;
+        case 'redeemed':
+          $tot['redeemed'] += abs($amount);
+          break;
+        case 'paid':
+          $tot['redeemed'] += abs($amount);
+          break;
+        case 'reversed':
+          $tot['reversed'] += abs($amount);
+          break;
+      }
+    }
+    return $tot;
+  }
+
+  private function get_user_alerts($user_id, $last_visit){
+    $alerts = [];
+
+    // Novos créditos desde a última visita
+    $new_earn = new WP_Query([
+      'post_type' => self::CPT_TXN,
+      'post_status' => 'publish',
+      'posts_per_page' => 1,
+      'fields' => 'ids',
+      'meta_query' => [
+        [
+          'key' => self::META_TXN_USER_ID,
+          'value' => (string)(int)$user_id,
+          'compare' => '=',
+        ],
+        [
+          'key' => self::META_TXN_STATUS,
+          'value' => 'earned',
+          'compare' => '=',
+        ],
+      ],
+      'date_query' => $last_visit ? [['after' => date('Y-m-d H:i:s', $last_visit), 'inclusive' => false]] : null,
+    ]);
+    if (!empty($new_earn->posts)){
+      $alerts[] = [
+        'class' => 'woocommerce-message',
+        'text'  => 'Novos créditos de cashback foram adicionados ao seu saldo desde sua última visita.',
+      ];
+    }
+
+    // Último resgate
+    $redeem = new WP_Query([
+      'post_type' => self::CPT_TXN,
+      'post_status' => 'publish',
+      'posts_per_page' => 1,
+      'fields' => 'ids',
+      'orderby' => 'date',
+      'order' => 'DESC',
+      'meta_query' => [
+        [
+          'key' => self::META_TXN_USER_ID,
+          'value' => (string)(int)$user_id,
+          'compare' => '=',
+        ],
+        [
+          'key' => self::META_TXN_TYPE,
+          'value' => 'redeem',
+          'compare' => '=',
+        ],
+      ],
+    ]);
+    if (!empty($redeem->posts)){
+      $tid = (int)$redeem->posts[0];
+      $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+      $amount = abs((int)get_post_meta($tid, self::META_TXN_AMOUNT, true));
+      $reason = (string)get_post_meta($tid, self::META_TXN_REASON, true);
+      if ($status === 'pending'){
+        $alerts[] = [
+          'class' => 'woocommerce-info',
+          'text'  => sprintf('Seu pedido de resgate de %s moedas está pendente de aprovação.', number_format_i18n($amount)),
+        ];
+      } elseif ($status === 'redeemed'){
+        $alerts[] = [
+          'class' => 'woocommerce-message',
+          'text'  => sprintf('Resgate de %s moedas concluído.', number_format_i18n($amount)),
+        ];
+      } elseif ($status === 'failed'){
+        $alerts[] = [
+          'class' => 'woocommerce-error',
+          'text'  => sprintf('Falha ao processar seu resgate de %s moedas. Motivo: %s', number_format_i18n($amount), esc_html($reason ?: 'erro desconhecido')),
+        ];
+      } elseif ($status === 'reversed'){
+        $alerts[] = [
+          'class' => 'woocommerce-error',
+          'text'  => sprintf('Seu resgate de %s moedas foi recusado. Motivo: %s', number_format_i18n($amount), esc_html($reason ?: 'não informado')),
+        ];
+      }
+    }
+
+    return $alerts;
   }
 
   private function is_order_eligible(WC_Order $order, array $opts, $coins_amount){
