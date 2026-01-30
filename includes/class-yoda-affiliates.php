@@ -31,6 +31,9 @@ class Yoda_Affiliates {
   const CRON_RELEASE = 'yoda_affiliates_release_commissions';
 
   public function hooks(){
+    // garante que a role exista mesmo em updates (sem reativar plugin)
+    add_action('init', [$this,'ensure_runtime_setup'], 1);
+
     add_action('init', [$this,'register_cpt']);
     add_action('init', [$this,'maybe_capture_affiliate_from_link'], 2);
 
@@ -48,6 +51,8 @@ class Yoda_Affiliates {
       add_action('edit_user_profile', [$this,'user_profile_fields']);
       add_action('personal_options_update', [$this,'save_user_profile_fields']);
       add_action('edit_user_profile_update', [$this,'save_user_profile_fields']);
+      add_action('admin_post_yoda_aff_release', [$this,'handle_admin_release']);
+      add_action('admin_post_yoda_aff_reverse', [$this,'handle_admin_reverse']);
     }
 
     // Checkout/order attribution
@@ -57,6 +62,10 @@ class Yoda_Affiliates {
     // Commission lifecycle
     add_action('woocommerce_order_status_changed', [$this,'on_order_status_changed'], 10, 4);
     add_action('woocommerce_order_refunded', [$this,'on_order_refunded'], 10, 2);
+    add_action('added_post_meta', [$this,'maybe_create_from_delivery_meta'], 10, 4);
+    add_action('updated_post_meta', [$this,'maybe_create_from_delivery_meta'], 10, 4);
+    add_action('added_post_meta', [$this,'maybe_reverse_from_delivery_meta'], 10, 4);
+    add_action('updated_post_meta', [$this,'maybe_reverse_from_delivery_meta'], 10, 4);
 
     // Cron: libera comissões
     add_action(self::CRON_RELEASE, [$this,'cron_release_commissions']);
@@ -86,6 +95,15 @@ class Yoda_Affiliates {
     if (!wp_next_scheduled(self::CRON_RELEASE)){
       wp_schedule_event(time() + 60, 'daily', self::CRON_RELEASE);
     }
+  }
+
+  public function ensure_runtime_setup(){
+    // Role
+    if (!get_role('yoda_affiliate')){
+      self::ensure_role();
+    }
+    // Cron
+    self::ensure_cron();
   }
 
   public static function get_opts(){
@@ -140,6 +158,14 @@ class Yoda_Affiliates {
       'manage_options',
       'yoda-affiliates',
       [$this,'admin_page']
+    );
+    add_submenu_page(
+      'yoda-kako',
+      'Comissões (Relatório)',
+      'Comissões (Revendedores)',
+      'manage_options',
+      'yoda-affiliates-report',
+      [$this,'admin_report_page']
     );
   }
 
@@ -220,6 +246,146 @@ class Yoda_Affiliates {
       </ol>
     </div>
     <?php
+  }
+
+  public function admin_report_page(){
+    if (!current_user_can('manage_options')) return;
+
+    $status  = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+    $aff_id  = isset($_GET['affiliate']) ? (int)$_GET['affiliate'] : 0;
+    $date_from = isset($_GET['from']) ? sanitize_text_field(wp_unslash($_GET['from'])) : '';
+    $date_to   = isset($_GET['to'])   ? sanitize_text_field(wp_unslash($_GET['to']))   : '';
+
+    $meta_query = [];
+    if ($status){
+      $meta_query[] = [
+        'key' => self::META_COMM_STATUS,
+        'value' => $status,
+        'compare' => '=',
+      ];
+    }
+    if ($aff_id > 0){
+      $meta_query[] = [
+        'key' => self::META_COMM_AFFILIATE_ID,
+        'value' => (string)$aff_id,
+        'compare' => '=',
+      ];
+    }
+
+    $q = new WP_Query([
+      'post_type' => self::CPT_COMMISSION,
+      'post_status' => 'publish',
+      'posts_per_page' => 50,
+      'orderby' => 'date',
+      'order' => 'DESC',
+      'meta_query' => $meta_query ?: null,
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+
+    ?>
+    <div class="wrap">
+      <h1>Comissões de Revendedores</h1>
+      <form method="get" style="margin:12px 0;">
+        <input type="hidden" name="page" value="yoda-affiliates-report">
+        <input type="hidden" name="post_type" value="yoda_commission">
+        <label>Status:
+          <select name="status">
+            <option value="">(todos)</option>
+            <option value="<?php echo esc_attr(self::STATUS_HOLD); ?>" <?php selected($status, self::STATUS_HOLD); ?>>A liberar</option>
+            <option value="<?php echo esc_attr(self::STATUS_RELEASED); ?>" <?php selected($status, self::STATUS_RELEASED); ?>>Liberada</option>
+            <option value="<?php echo esc_attr(self::STATUS_REVERSED); ?>" <?php selected($status, self::STATUS_REVERSED); ?>>Estornada</option>
+          </select>
+        </label>
+        <label style="margin-left:10px;">Afiliado (ID):
+          <input type="number" name="affiliate" value="<?php echo esc_attr($aff_id ?: ''); ?>" style="width:90px;">
+        </label>
+        <label style="margin-left:10px;">De:
+          <input type="date" name="from" value="<?php echo esc_attr($date_from); ?>">
+        </label>
+        <label style="margin-left:10px;">Até:
+          <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
+        </label>
+        <button class="button">Filtrar</button>
+      </form>
+
+      <table class="widefat striped">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Pedido</th>
+            <th>Afiliado</th>
+            <th>Valor</th>
+            <th>Status</th>
+            <th>Liberação</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($q->posts)): ?>
+          <tr><td colspan="7">Nenhuma comissão encontrada.</td></tr>
+        <?php else: ?>
+          <?php foreach ($q->posts as $p): ?>
+            <?php
+              $cid   = $p->ID;
+              $order_id = (int)get_post_meta($cid, self::META_COMM_ORDER_ID, true);
+              $affid = (int)get_post_meta($cid, self::META_COMM_AFFILIATE_ID, true);
+              $amount = (float)get_post_meta($cid, self::META_COMM_AMOUNT, true);
+              $stat = (string)get_post_meta($cid, self::META_COMM_STATUS, true);
+              $avail = (int)get_post_meta($cid, self::META_COMM_AVAILABLE_AT, true);
+              $rel   = (int)get_post_meta($cid, self::META_COMM_RELEASED_AT, true);
+              $status_label = $stat === self::STATUS_RELEASED ? 'Liberada' : ($stat === self::STATUS_REVERSED ? 'Estornada' : 'A liberar');
+              $when = $rel ? date_i18n('Y-m-d', $rel) : ($avail ? date_i18n('Y-m-d', $avail) : '-');
+              $release_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_aff_release&cid='.$cid), 'yoda_aff_release_'.$cid);
+              $reverse_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_aff_reverse&cid='.$cid), 'yoda_aff_reverse_'.$cid);
+            ?>
+            <tr>
+              <td>#<?php echo esc_html($cid); ?></td>
+              <td><?php echo $order_id ? '<a href="'.esc_url(get_edit_post_link($order_id)).'">#'.$order_id.'</a>' : '-'; ?></td>
+              <td><?php echo $affid ? '<a href="'.esc_url(get_edit_user_link($affid)).'">#'.$affid.'</a>' : '-'; ?></td>
+              <td><?php echo wp_kses_post(wc_price($amount)); ?></td>
+              <td><?php echo esc_html($status_label); ?></td>
+              <td><?php echo esc_html($when); ?></td>
+              <td>
+                <?php if ($stat === self::STATUS_HOLD): ?>
+                  <a class="button" href="<?php echo esc_url($release_url); ?>">Liberar agora</a>
+                <?php endif; ?>
+                <?php if ($stat !== self::STATUS_REVERSED): ?>
+                  <a class="button button-secondary" href="<?php echo esc_url($reverse_url); ?>">Estornar</a>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php
+  }
+
+  private function build_date_query($from, $to){
+    $dq = [];
+    if ($from) $dq[] = ['after' => $from.' 00:00:00', 'inclusive' => true];
+    if ($to)   $dq[] = ['before'=> $to.' 23:59:59', 'inclusive' => true];
+    return $dq ?: null;
+  }
+
+  public function handle_admin_release(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $cid = isset($_GET['cid']) ? (int)$_GET['cid'] : 0;
+    if (!$cid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_aff_release_'.$cid)) wp_die('Nonce inválido');
+    $this->release_commission($cid);
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-affiliates-report'));
+    exit;
+  }
+
+  public function handle_admin_reverse(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $cid = isset($_GET['cid']) ? (int)$_GET['cid'] : 0;
+    if (!$cid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_aff_reverse_'.$cid)) wp_die('Nonce inválido');
+    update_post_meta($cid, self::META_COMM_STATUS, self::STATUS_REVERSED);
+    update_post_meta($cid, self::META_COMM_REVERSED_AT, time());
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-affiliates-report'));
+    exit;
   }
 
   private function get_or_create_affiliate_code($user_id){
@@ -422,6 +588,23 @@ class Yoda_Affiliates {
     $this->reverse_commission_for_order($order, 'refund_'.$refund_id);
   }
 
+  public function maybe_create_from_delivery_meta($meta_id, $object_id, $meta_key, $meta_value){
+    if ($meta_key !== Yoda_Fulfillment::META_DELIV_STAT) return;
+    if ((string)$meta_value !== 'delivered') return;
+    $order = wc_get_order((int)$object_id);
+    if (!$order) return;
+    $this->maybe_create_commission_for_order($order);
+  }
+
+  public function maybe_reverse_from_delivery_meta($meta_id, $object_id, $meta_key, $meta_value){
+    if ($meta_key !== Yoda_Fulfillment::META_DELIV_STAT) return;
+    $val = (string)$meta_value;
+    if (!in_array($val, ['needs_review','failed','cancelled','canceled'], true)) return;
+    $order = wc_get_order((int)$object_id);
+    if (!$order) return;
+    $this->reverse_commission_for_order($order, 'delivery_'.$val);
+  }
+
   private function maybe_create_commission_for_order(WC_Order $order){
     $commission_id = (int)get_post_meta($order->get_id(), self::META_ORDER_COMMISSION_ID, true);
     if ($commission_id && get_post($commission_id)) return $commission_id;
@@ -581,11 +764,11 @@ class Yoda_Affiliates {
       return;
     }
     $user = wp_get_current_user();
-    if (!in_array('yoda_affiliate', (array)$user->roles, true)){
+    if ($this->is_affiliate_or_admin($user)){
+      echo $this->render_affiliate_dashboard($user->ID);
+    } else {
       echo '<p>Área exclusiva para revendedores.</p>';
-      return;
     }
-    echo $this->render_affiliate_dashboard($user->ID);
   }
 
   public function portal_shortcode($atts){
@@ -593,10 +776,10 @@ class Yoda_Affiliates {
       return '<div class="woocommerce-info">Faça login para acessar o portal do revendedor.</div>';
     }
     $user = wp_get_current_user();
-    if (!in_array('yoda_affiliate', (array)$user->roles, true)){
-      return '<div class="woocommerce-info">Área exclusiva para revendedores.</div>';
+    if ($this->is_affiliate_or_admin($user)){
+      return $this->render_affiliate_dashboard($user->ID);
     }
-    return $this->render_affiliate_dashboard($user->ID);
+    return '<div class="woocommerce-info">Área exclusiva para revendedores.</div>';
   }
 
   private function render_affiliate_dashboard($affiliate_id){
@@ -767,5 +950,11 @@ class Yoda_Affiliates {
     }
     return $out;
   }
-}
 
+  private function is_affiliate_or_admin($user){
+    if (!$user || !($user instanceof WP_User)) return false;
+    if (in_array('yoda_affiliate', (array)$user->roles, true)) return true;
+    if (current_user_can('manage_options')) return true; // admins podem visualizar
+    return false;
+  }
+}

@@ -75,9 +75,16 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 - Classe principal: `yoda-kako-delivery.php` carrega modulos.
 - API client: `includes/class-yoda-kako-client.php` (assina corpo JSON; endpoints balance, userinfo, transout, transqry).
 - Entrega: `includes/class-yoda-fulfillment.php`.
+  - Hook: `yoda_kako_delivery_delivered` (disparado quando `_yoda_delivery_status` vira `delivered`, usado por cashback/afiliados).
+  - Antifraude: se `_yoda_delivery_status` virar `needs_review/failed/cancelled`, cashback e comissões do pedido são estornados.
 - Checkout e campos: `includes/class-yoda-checkout.php` (+ extras em `class-yoda-checkout-extras.php`).
 - Shortcodes/UI: `class-yoda-packs.php`, `class-yoda-user-card.php`, `class-yoda-shop-buttons.php`, `class-yoda-direct-checkout.php`.
 - Webhook MP: `class-yoda-webhooks.php`.
+- Telas definidas: `docs/SCREENS.md`.
+- Papéis:
+  - **Admin**: permissões WordPress (`manage_options`), acesso total e visão dos portais para suporte.
+  - **Revendedor (Afiliado)**: role custom `yoda_affiliate` (criada na ativação e garantida em runtime). Acesso ao portal do revendedor e comissões.
+  - **Cliente**: role WooCommerce padrão `customer`, acesso a portais de cashback e sorteios.
 
 ## Boas praticas de segredos
 - Nunca commitar chaves ou `.env`. Valores efetivos devem vir do ambiente ou wp-config.php.

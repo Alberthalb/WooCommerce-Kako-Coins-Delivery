@@ -210,6 +210,7 @@ class Yoda_Fulfillment {
     if ($code === 0 && (int)$status === 2){
       update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
       update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
+      do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
       $order->add_order_note("Yoda Kako: entregue ✅ | amount={$amount} | orderId={$orderRef}");
 
       // envia e-mail ao cliente (AQUI VAI O TRECHO QUE VOCÊ CITOU)
@@ -228,6 +229,7 @@ class Yoda_Fulfillment {
       if ((int)$qrStatus === 2){
         update_post_meta($order->get_id(), self::META_DELIV_STAT, 'delivered');
         update_post_meta($order->get_id(), self::META_AUTOCOMPLETE_OK, 1);
+        do_action('yoda_kako_delivery_delivered', $order, $amount, $orderRef);
         $order->add_order_note("Yoda Kako: confirmada via transqry (dup) ✅ | orderId={$orderRef}");
 
         // também envia e-mail quando confirmado via transqry

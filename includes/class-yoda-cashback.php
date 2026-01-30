@@ -31,12 +31,16 @@ class Yoda_Cashback {
     if (is_admin()){
       add_action('admin_menu', [$this,'admin_menu']);
       add_action('admin_init', [$this,'register_settings']);
+      add_action('admin_post_yoda_cashback_reverse', [$this,'handle_reverse']);
+      add_action('admin_post_yoda_cashback_mark_redeemed', [$this,'handle_mark_redeemed']);
     }
 
     // Eventos de entrega Kako (emitidos pela classe Yoda_Fulfillment)
     add_action('yoda_kako_delivery_delivered', [$this,'on_kako_delivered'], 10, 3);
     add_action('added_post_meta', [$this,'maybe_award_from_delivery_meta'], 10, 4);
     add_action('updated_post_meta', [$this,'maybe_award_from_delivery_meta'], 10, 4);
+    add_action('added_post_meta', [$this,'maybe_reverse_from_delivery_meta'], 10, 4);
+    add_action('updated_post_meta', [$this,'maybe_reverse_from_delivery_meta'], 10, 4);
 
     // Estorno ao cancelar/reembolsar
     add_action('woocommerce_order_status_changed', [$this,'maybe_reverse_on_status'], 10, 4);
@@ -108,6 +112,14 @@ class Yoda_Cashback {
       'yoda-cashback',
       [$this,'admin_page']
     );
+    add_submenu_page(
+      'yoda-kako',
+      'Cashback (Relatório)',
+      'Cashback (Relatórios)',
+      'manage_options',
+      'yoda-cashback-report',
+      [$this,'admin_report_page']
+    );
   }
 
   public function register_settings(){
@@ -162,6 +174,165 @@ class Yoda_Cashback {
       </form>
     </div>
     <?php
+  }
+
+  public function admin_report_page(){
+    if (!current_user_can('manage_options')) return;
+    $status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+    $user_id = isset($_GET['user']) ? (int)$_GET['user'] : 0;
+    $date_from = isset($_GET['from']) ? sanitize_text_field(wp_unslash($_GET['from'])) : '';
+    $date_to   = isset($_GET['to'])   ? sanitize_text_field(wp_unslash($_GET['to']))   : '';
+
+    $meta_query = [];
+    if ($status){
+      $meta_query[] = [
+        'key' => self::META_TXN_STATUS,
+        'value' => $status,
+        'compare' => '=',
+      ];
+    }
+    if ($user_id > 0){
+      $meta_query[] = [
+        'key' => self::META_TXN_USER_ID,
+        'value' => (string)$user_id,
+        'compare' => '=',
+      ];
+    }
+
+    $q = new WP_Query([
+      'post_type' => self::CPT_TXN,
+      'post_status' => 'publish',
+      'posts_per_page' => 50,
+      'orderby' => 'date',
+      'order' => 'DESC',
+      'meta_query' => $meta_query ?: null,
+      'date_query' => $this->build_date_query($date_from, $date_to),
+    ]);
+
+    ?>
+    <div class="wrap">
+      <h1>Relatório de Cashback</h1>
+      <form method="get" style="margin:12px 0;">
+        <input type="hidden" name="page" value="yoda-cashback-report">
+        <label>Status:
+          <select name="status">
+            <option value="">(todos)</option>
+            <option value="earned" <?php selected($status, 'earned'); ?>>Creditado</option>
+            <option value="pending" <?php selected($status, 'pending'); ?>>Pendente</option>
+            <option value="redeemed" <?php selected($status, 'redeemed'); ?>>Resgatado</option>
+            <option value="reversed" <?php selected($status, 'reversed'); ?>>Estornado</option>
+            <option value="failed" <?php selected($status, 'failed'); ?>>Falhou</option>
+          </select>
+        </label>
+        <label style="margin-left:10px;">Usuário (ID):
+          <input type="number" name="user" value="<?php echo esc_attr($user_id ?: ''); ?>" style="width:90px;">
+        </label>
+        <label style="margin-left:10px;">De:
+          <input type="date" name="from" value="<?php echo esc_attr($date_from); ?>">
+        </label>
+        <label style="margin-left:10px;">Até:
+          <input type="date" name="to" value="<?php echo esc_attr($date_to); ?>">
+        </label>
+        <button class="button">Filtrar</button>
+      </form>
+
+      <table class="widefat striped">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Usuário</th>
+            <th>Pedido</th>
+            <th>Tipo</th>
+            <th>Valor</th>
+            <th>Status</th>
+            <th>Data</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($q->posts)): ?>
+          <tr><td colspan="8">Nenhuma movimentação encontrada.</td></tr>
+        <?php else: ?>
+          <?php foreach ($q->posts as $p): ?>
+            <?php
+              $tid = $p->ID;
+              $uid = (int)get_post_meta($tid, self::META_TXN_USER_ID, true);
+              $order_id = (int)get_post_meta($tid, self::META_TXN_ORDER_ID, true);
+              $type = (string)get_post_meta($tid, self::META_TXN_TYPE, true);
+              $status_row = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+              $amount = (int)get_post_meta($tid, self::META_TXN_AMOUNT, true);
+              $created = (int)get_post_meta($tid, self::META_TXN_CREATED_AT, true);
+              $type_label = $type === 'redeem' ? 'Resgate' : 'Crédito';
+              $status_label = $status_row;
+              if ($status_row === 'earned') $status_label = 'Creditado';
+              if ($status_row === 'pending') $status_label = 'Pendente';
+              if ($status_row === 'redeemed') $status_label = 'Resgatado';
+              if ($status_row === 'reversed') $status_label = 'Estornado';
+              if ($status_row === 'failed') $status_label = 'Falhou';
+              $reverse_url = wp_nonce_url(admin_url('admin-post.php?action=yoda_cashback_reverse&tid='.$tid), 'yoda_cashback_reverse_'.$tid);
+              $mark_url    = wp_nonce_url(admin_url('admin-post.php?action=yoda_cashback_mark_redeemed&tid='.$tid), 'yoda_cashback_mark_'.$tid);
+            ?>
+            <tr>
+              <td>#<?php echo esc_html($tid); ?></td>
+              <td><?php echo $uid ? '<a href="'.esc_url(get_edit_user_link($uid)).'">#'.$uid.'</a>' : '-'; ?></td>
+              <td><?php echo $order_id ? '<a href="'.esc_url(get_edit_post_link($order_id)).'">#'.$order_id.'</a>' : '-'; ?></td>
+              <td><?php echo esc_html($type_label); ?></td>
+              <td><?php echo esc_html(number_format_i18n($amount)); ?></td>
+              <td><?php echo esc_html($status_label); ?></td>
+              <td><?php echo $created ? esc_html(date_i18n('Y-m-d', $created)) : '-'; ?></td>
+              <td>
+                <?php if ($status_row !== 'reversed' && $status_row !== 'redeemed'): ?>
+                  <a class="button button-secondary" href="<?php echo esc_url($reverse_url); ?>">Estornar</a>
+                <?php endif; ?>
+                <?php if ($status_row === 'pending'): ?>
+                  <a class="button" href="<?php echo esc_url($mark_url); ?>">Marcar resgatado</a>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php
+  }
+
+  private function build_date_query($from, $to){
+    $dq = [];
+    if ($from) $dq[] = ['after' => $from.' 00:00:00', 'inclusive' => true];
+    if ($to)   $dq[] = ['before'=> $to.' 23:59:59', 'inclusive' => true];
+    return $dq ?: null;
+  }
+
+  public function handle_reverse(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $tid = isset($_GET['tid']) ? (int)$_GET['tid'] : 0;
+    if (!$tid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_cashback_reverse_'.$tid)) wp_die('Nonce inválido');
+    $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+    if ($status !== 'reversed'){
+      $user_id = (int)get_post_meta($tid, self::META_TXN_USER_ID, true);
+      $amount = (int)get_post_meta($tid, self::META_TXN_AMOUNT, true);
+      update_post_meta($tid, self::META_TXN_STATUS, 'reversed');
+      update_post_meta($tid, self::META_TXN_DONE_AT, time());
+      if ($user_id && $amount){
+        $this->add_balance($user_id, -$amount);
+      }
+    }
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+    exit;
+  }
+
+  public function handle_mark_redeemed(){
+    if (!current_user_can('manage_options')) wp_die('Sem permissão');
+    $tid = isset($_GET['tid']) ? (int)$_GET['tid'] : 0;
+    if (!$tid || !wp_verify_nonce($_GET['_wpnonce'] ?? '', 'yoda_cashback_mark_'.$tid)) wp_die('Nonce inválido');
+    $status = (string)get_post_meta($tid, self::META_TXN_STATUS, true);
+    if ($status === 'pending'){
+      update_post_meta($tid, self::META_TXN_STATUS, 'redeemed');
+      update_post_meta($tid, self::META_TXN_DONE_AT, time());
+    }
+    wp_safe_redirect(wp_get_referer() ?: admin_url('admin.php?page=yoda-cashback-report'));
+    exit;
   }
 
   /* ========================================================================
@@ -223,6 +394,16 @@ class Yoda_Cashback {
     $amount = (int)Yoda_Product_Meta::get_order_coins_amount($order);
     $order_ref = (string)get_post_meta($order->get_id(), Yoda_Fulfillment::META_ORDER_REF, true);
     $this->on_kako_delivered($order, $amount, $order_ref);
+  }
+
+  public function maybe_reverse_from_delivery_meta($meta_id, $object_id, $meta_key, $meta_value){
+    if (!class_exists('Yoda_Fulfillment')) return;
+    if ($meta_key !== Yoda_Fulfillment::META_DELIV_STAT) return;
+    $val = (string)$meta_value;
+    if (!in_array($val, ['needs_review','failed','cancelled','canceled'], true)) return;
+    $order = wc_get_order((int)$object_id);
+    if (!$order) return;
+    $this->reverse_for_order($order, 'delivery_'.$val);
   }
 
   public function maybe_reverse_on_status($order_id, $old_status, $new_status, $order){
@@ -473,6 +654,7 @@ class Yoda_Cashback {
   private function add_balance($user_id, $delta){
     $cur = (int)get_user_meta($user_id, self::META_USER_BALANCE, true);
     $new = $cur + (int)$delta;
+    if ($new < 0) $new = 0;
     update_user_meta($user_id, self::META_USER_BALANCE, $new);
     return $new;
   }
