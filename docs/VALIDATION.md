@@ -62,3 +62,4 @@
 ## Notas adicionais
 - Menu **Carteira/Cashback** disponível em Minha Conta para clientes logados; carrega o portal com saldo, resgate e extrato.
 - Cards mostram saldos por status: pendente, disponível, resgatado e estornado (moedas).
+- Saque de afiliado é manual: a solicitação cria `yoda_aff_payout` (pending) e e-mails; o admin muda para pago/rejeitado. Não há integração com gateway (ex.: Mercado Pago) — o pagamento real deve ser executado fora e depois marcado como pago no painel.

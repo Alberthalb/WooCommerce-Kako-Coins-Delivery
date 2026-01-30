@@ -17,8 +17,9 @@ class Yoda_Admin {
   }
 
   public function menu(){
+    $icon_url = plugins_url('assets/yoda-icon.png', dirname(__DIR__).'/yoda-kako-delivery.php');
     add_menu_page(
-      'Yoda Kako', 'Yoda', 'manage_options', 'yoda-kako', [$this,'render_page'], 'dashicons-controls-repeat', 56
+      'Yoda Kako', 'Yoda', 'manage_options', 'yoda-kako', [$this,'render_page'], $icon_url, 56
     );
   }
 
