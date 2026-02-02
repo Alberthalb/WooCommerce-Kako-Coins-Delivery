@@ -91,6 +91,16 @@ add_action('plugins_loaded', function () {
   (new Yoda_Raffles())->hooks();
 });
 
+// Link rápido na lista de plugins (restaura acesso fácil às telas de configuração)
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function($links){
+  if (!is_array($links)) $links = [];
+  if (current_user_can('manage_options')){
+    $config_url = admin_url('admin.php?page=yoda-kako');
+    array_unshift($links, sprintf('<a href="%s">%s</a>', esc_url($config_url), 'Config'));
+  }
+  return $links;
+});
+
 register_activation_hook(__FILE__, function(){
   if (class_exists('Yoda_Affiliates')) {
     Yoda_Affiliates::on_activate();

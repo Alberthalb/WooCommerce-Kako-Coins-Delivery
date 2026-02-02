@@ -18,9 +18,13 @@ class Yoda_Admin {
 
   public function menu(){
     $icon_url = plugins_url('assets/yoda-icon.png', dirname(__DIR__).'/yoda-kako-delivery.php');
-    add_menu_page(
-      'Yoda Kako', 'Yoda', 'manage_options', 'yoda-kako', [$this,'render_page'], $icon_url, 56
-    );
+    add_menu_page('Yoda Kako', 'Yoda', 'manage_options', 'yoda-kako', [$this,'render_config_page'], $icon_url, 56);
+
+    // Restaura as "telas" de configuração como submenus explícitos (Yoda → Config / Health-check)
+    // para evitar que pareçam removidas/ocultas.
+    remove_submenu_page('yoda-kako', 'yoda-kako');
+    add_submenu_page('yoda-kako', 'Config', 'Config', 'manage_options', 'yoda-kako', [$this,'render_config_page']);
+    add_submenu_page('yoda-kako', 'Health-check', 'Health-check', 'manage_options', 'yoda-kako-health', [$this,'render_health_page']);
   }
 
   public function register_settings(){
@@ -69,12 +73,17 @@ class Yoda_Admin {
   }
 
   public function render_page(){
+    // Compat: mantém o callback antigo apontando para a tela de Config.
+    $this->render_config_page();
+  }
+
+  public function render_config_page(){
     if (!current_user_can('manage_options')) return;
     $msg = isset($_GET['yoda_msg']) ? wp_unslash($_GET['yoda_msg']) : '';
     $o = get_option(self::OPT_KEY, []);
     ?>
     <div class="wrap">
-      <h1>Yoda Kako — Configuração & Health-Check</h1>
+      <h1>Yoda Kako — Config</h1>
       <?php if ($msg): ?><div class="notice notice-info"><p><?php echo wp_kses_post($msg); ?></p></div><?php endif; ?>
 
       <form method="post" action="options.php">
@@ -107,39 +116,10 @@ class Yoda_Admin {
       </form>
 
       <hr>
-      <h2>Health-Check</h2>
-      <p>Testes rápidos da API (balance, userinfo, transout, transqry).</p>
-
-      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
-        <?php wp_nonce_field('yoda_kako_balance'); ?>
-        <input type="hidden" name="action" value="yoda_kako_balance">
-        <button class="button button-primary">Testar Balance()</button>
-      </form>
-
-      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
-        <?php wp_nonce_field('yoda_kako_userinfo'); ?>
-        <input type="hidden" name="action" value="yoda_kako_userinfo">
-        <input type="text" name="kakoid" placeholder="KakoID" required>
-        <button class="button">Userinfo()</button>
-      </form>
-
-      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
-        <?php wp_nonce_field('yoda_kako_transout'); ?>
-        <input type="hidden" name="action" value="yoda_kako_transout">
-        <input type="text" name="openId" placeholder="openId" required>
-        <input type="number" name="amount" placeholder="amount" required>
-        <input type="text" name="orderId" placeholder="orderId" required>
-        <button class="button">Transout()</button>
-      </form>
-
-      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
-        <?php wp_nonce_field('yoda_kako_transqry'); ?>
-        <input type="hidden" name="action" value="yoda_kako_transqry">
-        <input type="text" name="orderId" placeholder="orderId" required>
-        <button class="button">Transqry()</button>
-      </form>
-      <hr>
       <h2>Antifraude & Regras</h2>
+      <p>
+        Testes da API ficam em <a href="<?php echo esc_url(admin_url('admin.php?page=yoda-kako-health')); ?>">Yoda → Health-check</a>.
+      </p>
       <form method="post" action="options.php" style="margin-bottom:12px">
         <?php settings_fields(self::OPT_GROUP); ?>
         <table class="form-table" role="presentation">
@@ -196,6 +176,60 @@ class Yoda_Admin {
     <?php
   }
 
+  public function render_health_page(){
+    if (!current_user_can('manage_options')) return;
+    $msg = isset($_GET['yoda_msg']) ? wp_unslash($_GET['yoda_msg']) : '';
+    list($appId, $appKey, $base) = $this->get_effective_creds();
+    $has_creds = (bool)($appId && $appKey);
+    ?>
+    <div class="wrap">
+      <h1>Yoda Kako — Health-check</h1>
+      <?php if ($msg): ?><div class="notice notice-info"><p><?php echo wp_kses_post($msg); ?></p></div><?php endif; ?>
+
+      <?php if (!$has_creds): ?>
+        <div class="notice notice-warning">
+          <p>
+            Credenciais ausentes. Configure em <a href="<?php echo esc_url(admin_url('admin.php?page=yoda-kako')); ?>">Yoda → Config</a>.
+          </p>
+        </div>
+      <?php endif; ?>
+
+      <p><strong>API Base efetiva:</strong> <code><?php echo esc_html($base ?: '-'); ?></code></p>
+
+      <p>Testes rápidos da API (balance, userinfo, transout, transqry).</p>
+
+      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
+        <?php wp_nonce_field('yoda_kako_balance'); ?>
+        <input type="hidden" name="action" value="yoda_kako_balance">
+        <button class="button button-primary">Testar Balance()</button>
+      </form>
+
+      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
+        <?php wp_nonce_field('yoda_kako_userinfo'); ?>
+        <input type="hidden" name="action" value="yoda_kako_userinfo">
+        <input type="text" name="kakoid" placeholder="KakoID" required>
+        <button class="button">Userinfo()</button>
+      </form>
+
+      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
+        <?php wp_nonce_field('yoda_kako_transout'); ?>
+        <input type="hidden" name="action" value="yoda_kako_transout">
+        <input type="text" name="openId" placeholder="openId" required>
+        <input type="number" name="amount" placeholder="amount" required>
+        <input type="text" name="orderId" placeholder="orderId" required>
+        <button class="button">Transout()</button>
+      </form>
+
+      <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin:8px 0;">
+        <?php wp_nonce_field('yoda_kako_transqry'); ?>
+        <input type="hidden" name="action" value="yoda_kako_transqry">
+        <input type="text" name="orderId" placeholder="orderId" required>
+        <button class="button">Transqry()</button>
+      </form>
+    </div>
+    <?php
+  }
+
   public function handle_balance(){
     if (!current_user_can('manage_options')) wp_die('Sem permissão');
     check_admin_referer('yoda_kako_balance');
@@ -203,19 +237,19 @@ class Yoda_Admin {
     $client = new Yoda_Kako_Client($base, $appId, $appKey);
     $res = $client->balance();
     $msg = $this->format_result($res, 'Balance');
-    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako'))); exit;
+    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako-health'))); exit;
   }
 
   public function handle_userinfo(){
     if (!current_user_can('manage_options')) wp_die('Sem permissão');
     check_admin_referer('yoda_kako_userinfo');
     $kakoId = isset($_POST['kakoid']) ? sanitize_text_field($_POST['kakoid']) : '';
-    if (!$kakoId){ wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode('Informe um KakoID'), admin_url('admin.php?page=yoda-kako'))); exit; }
+    if (!$kakoId){ wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode('Informe um KakoID'), admin_url('admin.php?page=yoda-kako-health'))); exit; }
     list($appId,$appKey,$base) = $this->get_effective_creds();
     $client = new Yoda_Kako_Client($base, $appId, $appKey);
     $res = $client->userinfo($kakoId);
     $msg = $this->format_result($res, 'Userinfo');
-    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako'))); exit;
+    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako-health'))); exit;
   }
 
   public function handle_transout(){
@@ -227,13 +261,13 @@ class Yoda_Admin {
     $orderId = substr($orderId, 0, 64);
     if (!$openId || $amount<=0 || !$orderId){
       $msg = 'Transout: preencha openId, amount (>0) e orderId.';
-      wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako'))); exit;
+      wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako-health'))); exit;
     }
     list($appId,$appKey,$base) = $this->get_effective_creds();
     $client = new Yoda_Kako_Client($base, $appId, $appKey);
     $res = $client->transout($openId, $amount, $orderId);
     $msg = $this->format_result($res, 'Transout');
-    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako'))); exit;
+    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako-health'))); exit;
   }
 
   public function handle_transqry(){
@@ -241,12 +275,12 @@ class Yoda_Admin {
     check_admin_referer('yoda_kako_transqry');
     $orderId = isset($_POST['orderId']) ? sanitize_text_field($_POST['orderId']) : '';
     $orderId = substr($orderId, 0, 64);
-    if (!$orderId){ wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode('Informe orderId'), admin_url('admin.php?page=yoda-kako'))); exit; }
+    if (!$orderId){ wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode('Informe orderId'), admin_url('admin.php?page=yoda-kako-health'))); exit; }
     list($appId,$appKey,$base) = $this->get_effective_creds();
     $client = new Yoda_Kako_Client($base, $appId, $appKey);
     $res = $client->transqry($orderId);
     $msg = $this->format_result($res, 'Transqry');
-    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako'))); exit;
+    wp_safe_redirect(add_query_arg('yoda_msg', rawurlencode($msg), admin_url('admin.php?page=yoda-kako-health'))); exit;
   }
 
   private function format_result($res, $fn){
