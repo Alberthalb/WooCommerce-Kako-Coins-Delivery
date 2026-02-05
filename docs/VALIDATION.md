@@ -13,7 +13,7 @@
 - [ ] Em navegador anônimo, acessar a loja com `/?ref=CODIGO`.
 - [ ] Realizar uma compra (checkout normal).
 - [ ] Verificar no pedido (admin) metas `_yoda_affiliate_id/_code`.
-- [ ] Validar modelo de comissão escolhido em **Yoda → Revendedores**: `% sobre valor`, `% sobre moedas entregues` ou `valor fixo`; conferir taxa/valor padrão, base (total/subtotal) e dias de liberação.
+- [ ] Validar modelo de comissão escolhido em **Yoda → Revendedores**: `% sobre moedas entregues` ou `moedas fixas`; conferir taxa/valor padrão e dias de liberação.
 - [ ] Gatilho de crédito: status de entrega `delivered` cria comissão **A liberar** (via meta `_yoda_delivery_status`).
 - [ ] Antifraude: ao mudar `_yoda_delivery_status` para `needs_review/failed/cancelled`, comissão é estornada automaticamente.
 - [ ] Forçar liberação (meta `_yoda_available_at` ou botão “Liberar agora”) → status **Liberada** + nota no pedido.
@@ -21,9 +21,10 @@
 - [ ] Validações de ref: código inválido limpa cookie/sessão; autoindicação (usuário logado = afiliado) é bloqueada quando `allow_self` está desativado.
 - [ ] Endpoint/menu “Revendedor” aparece no menu da Minha Conta para role `yoda_affiliate` e admin (teste visual).
 - [ ] Filtro de status na lista de comissões (portal) funciona: A liberar / Liberada / Estornada.
-- [ ] Saque: portal mostra saldo disponível/pending/pago, aceita solicitação até o limite e exibe histórico com status (pendente/pago/rejeitado).
-- [ ] E-mails de saque: afiliado recebe e-mail ao solicitar (pendente), quando pago e quando rejeitado; admin recebe notificação (config ou admin_email).
-- [ ] Filtros por data no portal do afiliado (yfrom/yto) afetam cards, comissões e saques exibidos.
+- [ ] Resgate em moedas: portal mostra saldo disponível/pendente/pago, aceita solicitação a partir de **5.000 moedas** e exibe histórico com status (pendente/pago/rejeitado).
+- [ ] Aviso de expiração: portal mostra data de expiração do saldo disponível (30 dias após liberação).
+- [ ] E-mails de resgate: afiliado recebe e-mail ao solicitar (pendente), quando pago e quando rejeitado; admin recebe notificação (config ou admin_email).
+- [ ] Filtros por data no portal do afiliado (yfrom/yto) afetam cards, comissões e resgates exibidos.
 
 ### 2. Cashback (moedas)
 - [ ] Ativar em **Yoda → Cashback** (1,2%, mínimo 5.000).
@@ -62,4 +63,4 @@
 ## Notas adicionais
 - Menu **Carteira/Cashback** disponível em Minha Conta para clientes logados; carrega o portal com saldo, resgate e extrato.
 - Cards mostram saldos por status: pendente, disponível, resgatado e estornado (moedas).
-- Saque de afiliado é manual: a solicitação cria `yoda_aff_payout` (pending) e e-mails; o admin muda para pago/rejeitado. Não há integração com gateway (ex.: Mercado Pago) — o pagamento real deve ser executado fora e depois marcado como pago no painel.
+- Resgate de moedas do afiliado é manual e mínimo **5.000 moedas**: a solicitação cria `yoda_aff_payout` (pending) e e-mails; o admin muda para pago/rejeitado após transferir moedas fora do painel (ex.: no Kako) e então marca como pago. O saldo disponível expira em 30 dias após liberação.

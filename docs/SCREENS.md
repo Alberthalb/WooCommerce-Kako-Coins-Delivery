@@ -5,14 +5,16 @@
 - **Revendedores (Config)**
   - Ativar/Desativar.
   - ParÃ¢metro de link (`ref`), duraÃ§Ã£o do cookie (dias).
-  - ComissÃ£o padrÃ£o (%), liberaÃ§Ã£o apÃ³s N dias, base de cÃ¡lculo (total/subtotal), permitir auto-compra.
-  - Elegibilidade: roles permitidas e pedido mÃ­nimo (total).
+  - Comissao padrao (% sobre moedas) ou moedas fixas, liberacao apos N dias, permitir auto-compra.
+  - Resgate minimo (moedas, minimo absoluto 5.000).
+  - Saldo disponivel expira em 30 dias apos liberacao (exibir aviso com data).
+  - Elegibilidade: roles permitidas e pedido minimo (moedas).
 - **Revendedores (RelatÃ³rios)**
-  - Lista de comissÃµes: pedido, afiliado, valor, status (a liberar/liberada/estornada), data de liberaÃ§Ã£o.
+  - Lista de comissoes: pedido, afiliado, valor (moedas), status (a liberar/liberada/estornada), data de liberacao.
   - Filtros: perÃ­odo, status, afiliado.
   - AÃ§Ãµes: estornar, liberar manual, exportar CSV.
 - **Afiliados (Resumo)**
-  - Tabela com: ID, Nome, Email, Pedidos, Total vendido, ComissÃµes liberadas/pendentes, DisponÃ­vel para saque, Payouts pendentes/pagos.
+  - Tabela com: ID, Nome, Email, Pedidos, Total vendido, Comissoes liberadas/pendentes (moedas), Disponivel para resgate (moedas), Resgates pendentes/pagos (moedas).
   - BotÃ£o Exportar CSV (respeita filtros).
 - **Cashback (Config)**
   - Ativar/Desativar.
@@ -35,8 +37,9 @@
   - Link pessoal com parÃ¢metro de referÃªncia.
   - Cards resumo: vendas atribuÃ­das, total vendido, comissÃµes liberadas.
   - Lista de pedidos indicados: mostra pedido, status do pedido, valor da comissÃ£o, status da comissÃ£o, data/liberaÃ§Ã£o.
-  - Tabela de comissÃµes: pedido, valor, status (a liberar/liberada/estornada), data de liberaÃ§Ã£o.
-  - Saque manual: mostra saldo disponÃ­vel/pendente/pago, formulÃ¡rio de solicitaÃ§Ã£o e histÃ³rico de saques.
+  - Tabela de comissoes: pedido, valor (moedas), status (a liberar/liberada/estornada), data de liberacao.
+  - Resgate manual (moedas): mostra saldo disponivel/pendente/pago, resgate minimo 5.000, formulario de solicitacao e historico de resgates.
+  - Aviso de expiracao do saldo disponivel (data de vencimento).
   - (Futuro) filtro por perÃ­odo/status.
 - Visibilidade: exibido para usuÃ¡rios com role `yoda_affiliate` e, para fins de suporte, tambÃ©m para administradores (`manage_options`).
 

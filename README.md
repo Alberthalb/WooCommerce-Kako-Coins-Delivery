@@ -76,13 +76,13 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
 
 ## Como configurar (admin)
 1. **Credenciais Kako**: em **Yoda → Config**, informe App ID/Key e ambiente (sandbox/production). Opcional: defina constantes no `wp-config.php`.
-2. **Afiliados**: em **Yoda → Revendedores**, ative, defina percentual padrão, dias de liberação, parâmetro `ref` e duração do cookie. Opcional: permitir/ bloquear autoindicação e mínimo de pedido.
+2. **Afiliados**: em **Yoda → Revendedores**, ative, defina percentual padrão (% sobre moedas) ou moedas fixas, dias de liberação, parâmetro `ref` e duração do cookie. Opcional: permitir/bloquear autoindicação e mínimo de moedas.
 3. **Cashback**: em **Yoda → Cashback**, ative, defina % (padrão 1,2%), arredondamento e resgate mínimo (mínimo absoluto 5.000). Ajuste elegibilidade (roles) e compra mínima em moedas.
 4. **Sorteios**: em **Yoda → Sorteios**, crie a campanha, defina status (draft/open/closed/drawn), datas e limite por usuário. Use “Sortear vencedor” ou “Encerrar e sortear”.
 5. **Ledger**: use **Yoda → Ledger** para consultas rápidas e export CSV.
 
 ## Como usar (afiliado/cliente)
-- **Afiliado (Revendedor)**: menu **Minha Conta → Revendedor** ou shortcode `[yoda_affiliate_portal]`. Lá vê link de indicação (`/?ref=CODIGO`), KPIs, pedidos indicados, comissões, solicita saque e acompanha status.
+- **Afiliado (Revendedor)**: menu **Minha Conta → Revendedor** ou shortcode `[yoda_affiliate_portal]`. Lá vê link de indicação (`/?ref=CODIGO`), KPIs, pedidos indicados, comissões, solicita resgate de moedas (mínimo 5.000) e acompanha status. O saldo disponível expira em 30 dias após liberação.
 - **Cliente (Cashback)**: menu **Minha Conta → Carteira/Cashback** ou `[yoda_cashback_portal]`. Consulta saldo, solicita resgate (≥ 5.000 moedas), acompanha extrato e alertas de crédito/resgate.
 - **Sorteios (Cliente)**: menu **Minha Conta → Sorteios** ou `[yoda_raffles]`. Lista campanhas abertas e permite inscrever-se respeitando o limite por usuário.
 
@@ -114,11 +114,11 @@ Plugin WordPress/WooCommerce para entregar moedas da Kako automaticamente apos p
   - **Revendedor (Afiliado)**: role custom `yoda_affiliate` (criada na ativação e garantida em runtime). Acesso ao portal do revendedor e comissões.
   - **Cliente**: role WooCommerce padrão `customer`, acesso a portais de cashback e sorteios.
 - Configs-chave no admin:
-  - Revendedores: comissão padrão, liberação após N dias, base, auto-compra, roles elegíveis, pedido mínimo.
+  - Revendedores: comissão padrão (% sobre moedas) ou moedas fixas, liberação após N dias, auto-compra, roles elegíveis, pedido mínimo (moedas), resgate mínimo (5.000) e expiração do saldo em 30 dias.
   - Cashback: % cashback, arredondamento, resgate mínimo, roles elegíveis, compra mínima (moedas).
 - Ledger: `includes/class-yoda-ledger.php` cria tabela `wp_yoda_ledger` para lançamentos de afiliado/cashback/sorteios.
   - Tela de consulta rápida em **Yoda → Ledger** (`class-yoda-ledger-admin.php`) com filtros simples.
-- Saque de afiliado (manual): portal solicita payout (status `pending`), admin marca `paid` ou `rejected`; registros em `yoda_aff_payout` e no Ledger.
+- Resgate de moedas do afiliado (manual): portal solicita resgate (status `pending`), admin marca `paid` ou `rejected`; registros em `yoda_aff_payout` e no Ledger.
 
 ## Boas praticas de segredos
 - Nunca commitar chaves ou `.env`. Valores efetivos devem vir do ambiente ou wp-config.php.
